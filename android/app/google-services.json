@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "493171238990",
+    "project_id": "weeing-front",
+    "storage_bucket": "weeing-front.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:493171238990:android:13d6e71dca04c48a37bb1f",
+        "android_client_info": {
+          "package_name": "com.example.weeing_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDXGvFIrd8KqcwljRTCiaXSMbwrFD-6gk4"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
