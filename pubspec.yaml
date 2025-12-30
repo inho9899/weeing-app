@@ -16,6 +16,7 @@ dependencies:
   permission_handler: ^12.0.1
   firebase_core: ^4.2.1
   firebase_messaging: ^16.0.4
+  flutter_webrtc: ^1.2.1
   web_socket_channel: ^2.4.0
   flutter_launcher_icons: ^0.13.1
   flutter_native_splash: ^2.3.10

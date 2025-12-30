@@ -1,9 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:http/http.dart' as http;
+import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+import 'package:weeing_app/widgets/lobby_header.dart';
+import 'package:weeing_app/widgets/lobby_webrtc_view.dart';
+import 'package:weeing_app/widgets/controls.dart';
+import 'package:weeing_app/widgets/trackpad_area.dart';
+import 'package:weeing_app/widgets/cycle_control.dart';
+import 'package:weeing_app/widgets/start_time_control.dart';
+import 'package:weeing_app/mouse_mode.dart';
 
 class LobbyScreen extends StatefulWidget {
   final String basePath; // 예: http://192.168.35.179:8000/
@@ -14,10 +21,15 @@ class LobbyScreen extends StatefulWidget {
 }
 
 class _LobbyScreenState extends State<LobbyScreen> {
-  // ===== WebSocket 화면 스트림 =====
-  late WebSocketChannel _channel;
-  Uint8List? _imageBytes;
-  bool _connected = false;
+  // ===== WebRTC 화면 스트림 =====
+  RTCPeerConnection? _pc;
+  RTCDataChannel? _inputChannel;
+  final RTCVideoRenderer _renderer = RTCVideoRenderer();
+  bool _webrtcConnected = false;
+  Timer? _webrtcRetryTimer;
+  WebSocketChannel? _signalingChannel;
+  StreamSubscription? _signalingSubscription;
+  String? _senderPeerId;
 
   // ===== 상태 값 =====
   int _cycle = 0;
@@ -26,10 +38,14 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   List<String> _builds = [];
   String _currentMap = '';
-  String? _runningBuildFromStatus; // status에서 받은 running_build
+  String? _runningBuildFromStatus;
 
   final TextEditingController _commandController = TextEditingController();
   Timer? _pollTimer;
+  bool _initialStatusFetched = false;
+
+  double _streamScale = 1.0;
+  Offset _streamOffset = Offset.zero;
 
   // ===== Wheel controllers =====
   late FixedExtentScrollController _cycleCtrl;
@@ -38,10 +54,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   // ===== Trackpad mode =====
   bool _trackpadMode = false;
-  double _accumDx = 0; // 트랙패드 이동 누적값
-  double _accumDy = 0;
-
-  static const double _pointerScale = 2;
 
   // ===== API URL =====
   String get _statusUrl => '${widget.basePath}status/';
@@ -49,12 +61,11 @@ class _LobbyScreenState extends State<LobbyScreen> {
   String get _setCycleUrl => '${widget.basePath}status/cycle/set';
   String get _startTimeUrl => '${widget.basePath}status/start_time';
   String get _inputSequenceUrl => '${widget.basePath}input/sequence';
-  String get _mouseMoveBaseUrl => '${widget.basePath}input/MouseMove';
-  String get _mouseClickBaseUrl => '${widget.basePath}input/MouseClick';
   String get _startUrl =>
       '${widget.basePath}weeing/start/${Uri.encodeComponent(_currentMap)}';
   String get _pauseUrl => '${widget.basePath}weeing/pause';
   String get _resumeUrl => '${widget.basePath}weeing/resume';
+  String get _convertUrl => '${widget.basePath}input/convert_mode';
 
   String get _hostText {
     try {
@@ -69,40 +80,13 @@ class _LobbyScreenState extends State<LobbyScreen> {
   @override
   void initState() {
     super.initState();
-
     _cycleCtrl = FixedExtentScrollController();
     _hourCtrl = FixedExtentScrollController();
     _minCtrl = FixedExtentScrollController();
 
-    // WebSocket 화면 스트림
-    _channel = WebSocketChannel.connect(
-      Uri.parse('ws://${Uri.parse(widget.basePath).host}:8765'),
-    );
-
-    _channel.stream.listen(
-      (message) {
-        try {
-          final data = jsonDecode(message);
-          if (data is Map && data['type'] == 'frame') {
-            final bytes = base64Decode(data['data'] as String);
-            setState(() {
-              _imageBytes = bytes;
-              _connected = true;
-            });
-          }
-        } catch (e) {
-          debugPrint('WebSocket parse error: $e');
-        }
-      },
-      onDone: () {
-        debugPrint('WebSocket closed');
-        setState(() => _connected = false);
-      },
-      onError: (error) {
-        debugPrint('WebSocket error: $error');
-        setState(() => _connected = false);
-      },
-    );
+    _renderer.initialize().then((_) {
+      _connectWebRTC();
+    });
 
     _fetchBuildList();
     _fetchStatus();
@@ -115,13 +99,148 @@ class _LobbyScreenState extends State<LobbyScreen> {
 
   @override
   void dispose() {
-    _channel.sink.close();
+    _webrtcRetryTimer?.cancel();
+    _signalingSubscription?.cancel();
+    _signalingChannel?.sink.close();
+    _inputChannel?.close();
+    _pc?.close();
+    _renderer.dispose();
+
     _pollTimer?.cancel();
     _commandController.dispose();
     _cycleCtrl.dispose();
     _hourCtrl.dispose();
     _minCtrl.dispose();
     super.dispose();
+  }
+
+  // =========================================================
+  // WebRTC Signaling
+  // =========================================================
+
+  String get _webrtcSignalingUrl =>
+      'ws://${Uri.parse(widget.basePath).host}:8765/ws';
+
+  void _connectWebRTC() async {
+    _signalingSubscription?.cancel();
+    _signalingChannel?.sink.close();
+
+    try {
+      _signalingChannel = WebSocketChannel.connect(Uri.parse(_webrtcSignalingUrl));
+      _signalingSubscription = _signalingChannel!.stream.listen(
+        (message) => _onSignalingMessage(message),
+        onDone: () => _scheduleWebRTCRetry(),
+        onError: (_) => _scheduleWebRTCRetry(),
+      );
+
+      // Join room
+      _signalingChannel!.sink.add(jsonEncode({
+        'type': 'join',
+        'role': 'receiver',
+        'roomId': 'default',
+        'peerId': 'receiver_${DateTime.now().millisecondsSinceEpoch}',
+      }));
+      debugPrint('WebRTC: Join message sent');
+    } catch (_) {
+      _scheduleWebRTCRetry();
+    }
+  }
+
+  void _scheduleWebRTCRetry() {
+    setState(() => _webrtcConnected = false);
+    _webrtcRetryTimer?.cancel();
+    _webrtcRetryTimer = Timer(const Duration(seconds: 3), () => _connectWebRTC());
+  }
+
+  void _onSignalingMessage(String message) async {
+    try {
+      final data = jsonDecode(message);
+      final type = data['type'];
+
+      if (type == 'joined') {
+        // Successfully joined
+      } else if (type == 'peer_joined') {
+        if (data['role'] == 'sender') {
+          _senderPeerId = data['peerId'];
+          debugPrint('WebRTC: Sender joined: $_senderPeerId');
+          await _createPeerConnection();
+        }
+      } else if (type == 'offer') {
+        _senderPeerId = data['fromPeerId'];
+        debugPrint('WebRTC: Received offer from $_senderPeerId');
+        if (_pc == null) await _createPeerConnection();
+        await _pc!.setRemoteDescription(RTCSessionDescription(data['sdp'], 'offer'));
+        final answer = await _pc!.createAnswer();
+        await _pc!.setLocalDescription(answer);
+        _signalingChannel!.sink.add(jsonEncode({
+          'type': 'answer',
+          'toPeerId': _senderPeerId,
+          'sdp': answer.sdp,
+        }));
+        debugPrint('WebRTC: Answer sent');
+      } else if (type == 'candidate') {
+        final candidate = data['candidate'];
+        await _pc?.addCandidate(RTCIceCandidate(
+          candidate['candidate'],
+          candidate['sdpMid'],
+          candidate['sdpMLineIndex'],
+        ));
+      } else if (type == 'peer_left') {
+        if (data['peerId'] == _senderPeerId) {
+          _pc?.close();
+          _pc = null;
+          setState(() => _webrtcConnected = false);
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _createPeerConnection() async {
+    if (_pc != null) await _pc!.close();
+
+    _pc = await createPeerConnection({
+      'iceServers': [
+        {'urls': 'stun:stun.l.google.com:19302'},
+      ],
+      'sdpSemantics': 'unified-plan',
+    });
+
+    _pc!.onIceCandidate = (candidate) {
+      if (_senderPeerId != null) {
+        _signalingChannel!.sink.add(jsonEncode({
+          'type': 'candidate',
+          'toPeerId': _senderPeerId,
+          'candidate': {
+            'candidate': candidate.candidate,
+            'sdpMid': candidate.sdpMid,
+            'sdpMLineIndex': candidate.sdpMLineIndex,
+          },
+        }));
+      }
+    };
+
+    _pc!.onConnectionState = (state) {
+      debugPrint('WebRTC: Connection state changed: $state');
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+        setState(() => _webrtcConnected = true);
+      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+          state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+        setState(() => _webrtcConnected = false);
+      }
+    };
+
+    _pc!.onTrack = (event) {
+      debugPrint('WebRTC: onTrack kind=${event.track.kind} streams=${event.streams.length}');
+      if (event.track.kind == 'video') {
+        setState(() {
+          _renderer.srcObject = event.streams.isNotEmpty ? event.streams[0] : null;
+        });
+      }
+    };
+
+    _pc!.onDataChannel = (channel) {
+      _inputChannel = channel;
+    };
   }
 
   // =========================================================
@@ -147,13 +266,10 @@ class _LobbyScreenState extends State<LobbyScreen> {
           _currentMap = _builds[0];
         }
       });
-    } catch (e) {
-      debugPrint('fetchBuildList error: $e');
-    }
+    } catch (_) {}
   }
 
   Map<String, String> _parseStatusData(String? dataStr) {
-    debugPrint('STATUS raw data: $dataStr');
     final out = <String, String>{};
     if (dataStr == null) return out;
     for (final seg in dataStr.split(',')) {
@@ -214,76 +330,55 @@ class _LobbyScreenState extends State<LobbyScreen> {
         if (runningBuild != null) {
           _runningBuildFromStatus = runningBuild;
           if (_builds.contains(runningBuild)) {
-            _currentMap = runningBuild!;
+            _currentMap = runningBuild;
           }
         }
       });
 
-      if (expCycle != null) _cycleCtrl.jumpToItem(_cycle);
-      if (startH != null) _hourCtrl.jumpToItem(_startHour);
-      if (startM != null) _minCtrl.jumpToItem(_startMinute);
-
-      debugPrint(
-          'STATUS parsed -> cycle=$_cycle, time=${_startHour}:${_startMinute}, running_build=$_runningBuildFromStatus');
-    } catch (e) {
-      debugPrint('fetchStatus error: $e');
-    }
+      // 초기 1회만 스크롤 위치를 맞춤 (사용자 조작 방해 방지)
+      if (!_initialStatusFetched) {
+        if (expCycle != null) _cycleCtrl.jumpToItem(_cycle);
+        if (startH != null) _hourCtrl.jumpToItem(_startHour);
+        if (startM != null) _minCtrl.jumpToItem(_startMinute);
+        _initialStatusFetched = true;
+      }
+    } catch (_) {}
   }
 
   Future<void> _setCycleOnServer(int value) async {
     try {
       final uri = Uri.parse(_setCycleUrl);
-      final res = await http.post(
+      await http.post(
         uri,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode(value),
       );
-      if (res.statusCode != 200) {
-        debugPrint('set_cycle failed: ${res.statusCode} ${res.body}');
-      }
-    } catch (e) {
-      debugPrint('set_cycle error: $e');
-    }
+    } catch (_) {}
   }
 
   Future<void> _sendStartTimeDelta(int hDelta, int mDelta) async {
     try {
-      final res = await http.post(
+      await http.post(
         Uri.parse(_startTimeUrl),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'hour': hDelta, 'minute': mDelta}),
       );
-      if (res.statusCode != 200) {
-        debugPrint('start_time delta failed: ${res.statusCode} ${res.body}');
-      }
-    } catch (e) {
-      debugPrint('start_time delta error: $e');
-    }
+    } catch (_) {}
   }
 
   Future<void> _handleStart() async {
-    if (_currentMap.isEmpty) {
-      debugPrint('No build available to start');
-      return;
-    }
+    if (_currentMap.isEmpty) return;
     try {
-      debugPrint('Starting build: $_currentMap');
       final res = await http.post(Uri.parse(_startUrl));
       if (res.statusCode == 409) {
-        debugPrint('Weeing already running. Trying resume...');
         final resumeRes = await http.post(Uri.parse(_resumeUrl));
         if (resumeRes.statusCode != 200) {
           throw Exception('Resume failed');
         }
-        debugPrint('Weeing resumed.');
-      } else if (res.statusCode == 200) {
-        debugPrint('Weeing started.');
-      } else {
+      } else if (res.statusCode != 200) {
         throw Exception('Start failed (${res.statusCode})');
       }
-    } catch (e) {
-      debugPrint('Start/resume request failed: $e');
-    }
+    } catch (_) {}
     _fetchStatus();
   }
 
@@ -291,10 +386,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
     try {
       final res = await http.post(Uri.parse(_pauseUrl));
       if (res.statusCode != 200) throw Exception('Pause failed');
-      debugPrint('Pause requested successfully');
-    } catch (e) {
-      debugPrint('Pause request failed: $e');
-    }
+    } catch (_) {}
     _fetchStatus();
   }
 
@@ -304,40 +396,19 @@ class _LobbyScreenState extends State<LobbyScreen> {
     try {
       final url = '$_inputSequenceUrl/${Uri.encodeComponent(msg)}';
       final res = await http.post(Uri.parse(url));
-      if (res.statusCode != 200) {
-        throw Exception('HTTP ${res.statusCode}');
-      }
-      debugPrint('Sent sequence: "$msg"');
-    } catch (e) {
-      debugPrint('Send failed: $e');
-    }
+      if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
+    } catch (_) {}
+  }
+
+  Future<void> _handle_convert() async {
+    try {
+      final res = await http.post(Uri.parse(_convertUrl));
+      if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
+    } catch (_) {}
   }
 
   // ===== Mouse APIs =====
-
-  Future<void> _sendMouseMove(int dx, int dy) async {
-    try {
-      final url = '$_mouseMoveBaseUrl/$dx/$dy';
-      final res = await http.post(Uri.parse(url));
-      if (res.statusCode != 200) {
-        debugPrint('mouse_move failed: ${res.statusCode} ${res.body}');
-      }
-    } catch (e) {
-      debugPrint('mouse_move error: $e');
-    }
-  }
-
-  Future<void> _sendMouseClick(String button) async {
-    try {
-      final url = '$_mouseClickBaseUrl/$button';
-      final res = await http.post(Uri.parse(url));
-      if (res.statusCode != 200) {
-        debugPrint('mouse_click failed: ${res.statusCode} ${res.body}');
-      }
-    } catch (e) {
-      debugPrint('mouse_click error: $e');
-    }
-  }
+  // Delegated to MouseMode widget
 
   // =========================================================
   // StartTime 휠 → delta 계산
@@ -374,7 +445,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
   @override
   Widget build(BuildContext context) {
     const bgColor = Color(0xFFF3F3F5);
-    const darkGrey = Color(0xFF5A5A5A);
 
     return Scaffold(
       backgroundColor: bgColor,
@@ -383,88 +453,88 @@ class _LobbyScreenState extends State<LobbyScreen> {
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 480),
             child: SingleChildScrollView(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 상단 IP + info
-                  Row(
-                    children: [
-                      Text(
-                        _hostText,
-                        style: const TextStyle(
-                          color: Colors.red,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const Spacer(),
-                      IconButton(
-                        onPressed: () {},
-                        icon: const Icon(Icons.info_outline),
-                      ),
-                    ],
+                  LobbyHeader(
+                    hostText: _hostText,
+                    onInfoTap: () {
+                      // Info 탭 동작 필요 시 구현
+                    },
                   ),
                   const SizedBox(height: 8),
-
-                  // 화면 스트림
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: AspectRatio(
-                      aspectRatio: 16 / 9,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
-                        child: _imageBytes == null
-                            ? Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  const CircularProgressIndicator(),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    _connected
-                                        ? '첫 프레임 대기 중...'
-                                        : '서버 연결 없음...',
-                                    style: const TextStyle(fontSize: 13),
-                                  ),
-                                ],
-                              )
-                            : Image.memory(
-                                _imageBytes!,
-                                gaplessPlayback: true,
-                                fit: BoxFit.cover,
-                              ),
-                      ),
-                    ),
+                  LobbyWebRTCView(
+                    renderer: _renderer,
+                    connected: _webrtcConnected,
+                    scale: _streamScale,
+                    offset: _streamOffset,
                   ),
                   const SizedBox(height: 16),
-
-                  // 스트림 아래 영역: 컨트롤 or 트랙패드
-                  if (!_trackpadMode) ...[
-                    _buildControlArea(darkGrey),
-                  ] else ...[
-                    _buildTrackpadArea(),
-                  ],
-
+                  if (!_trackpadMode)
+                    LobbyControls(
+                      builds: _builds,
+                      currentMap: _currentMap,
+                      onMapChanged: (v) {
+                        if (v == null) return;
+                        setState(() => _currentMap = v);
+                      },
+                      onStart: _handleStart,
+                      onPause: _handlePause,
+                      cycle: CycleControl(
+                        value: _cycle,
+                        controller: _cycleCtrl,
+                        onChanged: (v) {
+                          setState(() => _cycle = v);
+                          _setCycleOnServer(v);
+                        },
+                      ),
+                      startTime: StartTimeControl(
+                        hour: _startHour,
+                        minute: _startMinute,
+                        hourController: _hourCtrl,
+                        minuteController: _minCtrl,
+                        onHourChanged: _onHourChanged,
+                        onMinuteChanged: _onMinuteChanged,
+                      ),
+                      commandController: _commandController,
+                      onSend: _handleSend,
+                      onConvertMode: _handle_convert,
+                    )
+                  else
+                    MouseMode(
+                      basePath: widget.basePath,
+                      initialScale: _streamScale,
+                      initialOffset: _streamOffset,
+                      onScaleChanged: (s) => setState(() => _streamScale = s),
+                      onOffsetChanged: (o) => setState(() => _streamOffset = o),
+                    ),
                   const SizedBox(height: 24),
-
-                  // 트랙패드 토글 버튼 (오른쪽 아래)
                   Align(
                     alignment: Alignment.centerRight,
                     child: GestureDetector(
                       onTap: () {
                         setState(() {
                           _trackpadMode = !_trackpadMode;
+                          // 마우스 모드 진입/해제 시 확대 및 이동 초기화
+                          _streamScale = 1.0;
+                          _streamOffset = Offset.zero;
                         });
+
+                        // 트랙패드 모드에서 돌아올 때 휠 위치 복구
+                        if (!_trackpadMode) {
+                          _initialStatusFetched = false; // 다음 fetchStatus에서 다시 맞추도록 허용
+                          WidgetsBinding.instance.addPostFrameCallback((_) {
+                            if (_cycleCtrl.hasClients) _cycleCtrl.jumpToItem(_cycle);
+                            if (_hourCtrl.hasClients) _hourCtrl.jumpToItem(_startHour);
+                            if (_minCtrl.hasClients) _minCtrl.jumpToItem(_startMinute);
+                          });
+                        }
                       },
                       child: Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
-                          color:
-                              _trackpadMode ? Colors.blueAccent : Colors.pinkAccent,
+                          color: _trackpadMode ? Colors.blueAccent : Colors.pinkAccent,
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(
@@ -479,363 +549,6 @@ class _LobbyScreenState extends State<LobbyScreen> {
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  // ===== 컨트롤 모드 UI =====
-  Widget _buildControlArea(Color darkGrey) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Build Picker
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: darkGrey,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: _currentMap.isNotEmpty ? _currentMap : null,
-              isExpanded: true,
-              dropdownColor: Colors.grey[850],
-              iconEnabledColor: Colors.white,
-              style: const TextStyle(color: Colors.white),
-              items: _builds
-                  .map(
-                    (b) => DropdownMenuItem(
-                      value: b,
-                      child: Text(b),
-                    ),
-                  )
-                  .toList(),
-              onChanged: (v) {
-                if (v == null) return;
-                setState(() => _currentMap = v);
-              },
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        // Start / Pause
-        Row(
-          children: [
-            Expanded(
-              child: _greyButton(label: 'Start', onTap: _handleStart),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _greyButton(label: 'Pause', onTap: _handlePause),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-
-        // Cycle + StartTime
-        Row(
-          children: [
-            Expanded(child: _cycleControl()),
-            const SizedBox(width: 8),
-            Expanded(child: _startTimeControl()),
-          ],
-        ),
-        const SizedBox(height: 20),
-
-        // 메시지 입력
-        TextField(
-          controller: _commandController,
-          decoration: InputDecoration(
-            filled: true,
-            fillColor: Colors.white,
-            hintText: '메시지 입력...',
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(6),
-              borderSide: BorderSide.none,
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 10,
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-
-        Row(
-          children: [
-            Expanded(
-              child: _greyButton(
-                label: 'Send',
-                onTap: _handleSend,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _greyButton(
-                label: 'Clear',
-                onTap: () => _commandController.clear(),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  // ===== 트랙패드 모드 UI =====
-  Widget _buildTrackpadArea() {
-    return Column(
-      children: [
-        Container(
-          height: 260,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.06),
-                blurRadius: 8,
-                offset: const Offset(0, 2),
-              ),
-            ],
-          ),
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () {
-              // 좌클릭
-              _sendMouseClick('left');
-            },
-            onDoubleTap: () {
-              // 우클릭
-              _sendMouseClick('right');
-            },
-            onPanStart: (_) {
-              _accumDx = 0;
-              _accumDy = 0;
-            },
-            onPanUpdate: (details) {
-              // 드래그한 픽셀 * 민감도 로 누적
-              _accumDx += details.delta.dx * _pointerScale;
-              _accumDy += details.delta.dy * _pointerScale;
-
-              int dxInt = _accumDx.round();
-              int dyInt = _accumDy.round();
-
-              // 아직 1픽셀 이하라면 전송 안 함
-              if (dxInt == 0 && dyInt == 0) return;
-
-              // 보낸 만큼 누적값에서 빼주기 (소수 부분은 계속 쌓이게)
-              _accumDx -= dxInt;
-              _accumDy -= dyInt;
-
-              _sendMouseMove(dxInt, dyInt);
-            },
-            onPanEnd: (_) {
-              _accumDx = 0;
-              _accumDy = 0;
-            },
-            child: const Center(
-              child: Text(
-                'Trackpad mode\n(탭=좌클릭, 더블탭=우클릭, 드래그=이동)',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.black26,
-                  fontSize: 13,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  // ===== 공통 helpers =====
-  Widget _greyButton({
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return SizedBox(
-      height: 44,
-      child: ElevatedButton(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF757575),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(6),
-          ),
-          padding: EdgeInsets.zero,
-        ),
-        onPressed: onTap,
-        child: Text(
-          label,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 15,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _numberPicker({
-    required int max,
-    required int selected,
-    required ValueChanged<int> onChanged,
-    required FixedExtentScrollController controller,
-    double width = 60,
-  }) {
-    final safeSelected = selected.clamp(0, max);
-
-    return SizedBox(
-      width: width,
-      height: 110,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Container(
-            height: 32,
-            width: width - 8,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.9),
-              borderRadius: BorderRadius.circular(6),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.08),
-                  blurRadius: 4,
-                  offset: const Offset(0, 1),
-                ),
-              ],
-            ),
-          ),
-          ListWheelScrollView.useDelegate(
-            controller: controller,
-            physics: const FixedExtentScrollPhysics(),
-            perspective: 0.003,
-            itemExtent: 32,
-            onSelectedItemChanged: (index) {
-              if (index < 0 || index > max) return;
-              onChanged(index);
-            },
-            childDelegate: ListWheelChildBuilderDelegate(
-              builder: (context, index) {
-                if (index < 0 || index > max) return null;
-                final bool isSelected = index == safeSelected;
-                return Center(
-                  child: Text(
-                    index.toString().padLeft(2, '0'),
-                    style: TextStyle(
-                      fontSize: isSelected ? 18 : 16,
-                      fontWeight:
-                          isSelected ? FontWeight.w700 : FontWeight.w500,
-                      color: isSelected ? Colors.black : Colors.black45,
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _cycleControl() {
-    return SizedBox(
-      height: 160,
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: const Color(0xFFE6E6E9),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Cycle',
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 15,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: Center(
-                child: _numberPicker(
-                  max: 99,
-                  selected: _cycle,
-                  controller: _cycleCtrl,
-                  width: 70,
-                  onChanged: (v) {
-                    if (v == _cycle) return;
-                    setState(() => _cycle = v);
-                    _setCycleOnServer(v);
-                  },
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _startTimeControl() {
-    return SizedBox(
-      height: 170,
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: const Color(0xFFE6E6E9),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Column(
-          children: [
-            Expanded(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                children: [
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text(
-                        '시',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                      const SizedBox(height: 4),
-                      _numberPicker(
-                        max: 23,
-                        selected: _startHour,
-                        controller: _hourCtrl,
-                        width: 60,
-                        onChanged: _onHourChanged,
-                      ),
-                    ],
-                  ),
-                  Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Text(
-                        '분',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                      const SizedBox(height: 4),
-                      _numberPicker(
-                        max: 59,
-                        selected: _startMinute,
-                        controller: _minCtrl,
-                        width: 60,
-                        onChanged: _onMinuteChanged,
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
         ),
       ),
     );

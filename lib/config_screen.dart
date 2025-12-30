@@ -115,7 +115,8 @@ class _ConfigScreenState extends State<ConfigScreen> {
     }
 
     final device = _devices[index];
-    final uri = Uri.parse('http://${device.ip}/status/');
+    final host = device.ip.split(':')[0];
+    final uri = Uri.parse('http://$host:8001/status/');
 
     // print('[ConfigScreen] [${device.ip}] 상태 체크 시작 - URL: $uri');
 
