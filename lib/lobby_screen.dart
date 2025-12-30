@@ -20,7 +20,7 @@ class LobbyScreen extends StatefulWidget {
   State<LobbyScreen> createState() => _LobbyScreenState();
 }
 
-class _LobbyScreenState extends State<LobbyScreen> {
+class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   // ===== WebRTC 화면 스트림 =====
   RTCPeerConnection? _pc;
   RTCDataChannel? _inputChannel;
@@ -88,6 +88,8 @@ class _LobbyScreenState extends State<LobbyScreen> {
       _connectWebRTC();
     });
 
+    WidgetsBinding.instance.addObserver(this);
+
     _fetchBuildList();
     _fetchStatus();
 
@@ -98,7 +100,50 @@ class _LobbyScreenState extends State<LobbyScreen> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      // 앱이 foreground로 돌아올 때 WebRTC 재연결
+      debugPrint('App resumed, reconnecting WebRTC...');
+      _reconnectWebRTC();
+    }
+  }
+
+  void _reconnectWebRTC() async {
+    debugPrint('WebRTC: Reconnecting (IP Switching or Resume)...');
+    
+    // 1. 모든 기존 연결 및 상태를 명시적으로 파괴
+    _webrtcRetryTimer?.cancel();
+    _webrtcRetryTimer = null;
+    
+    _signalingSubscription?.cancel();
+    _signalingSubscription = null;
+    
+    _signalingChannel?.sink.close();
+    _signalingChannel = null;
+    
+    _inputChannel?.close();
+    _inputChannel = null;
+    
+    await _pc?.close();
+    _pc = null;
+
+    _senderPeerId = null;
+    
+    setState(() {
+      _webrtcConnected = false;
+      _renderer.srcObject = null;
+    });
+
+    // 2. 약간의 지연 후 새 서버에 연결
+    Future.delayed(const Duration(milliseconds: 100), () {
+      if (mounted) _connectWebRTC();
+    });
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _webrtcRetryTimer?.cancel();
     _signalingSubscription?.cancel();
     _signalingChannel?.sink.close();
@@ -407,6 +452,73 @@ class _LobbyScreenState extends State<LobbyScreen> {
     } catch (_) {}
   }
 
+  Future<void> _callSimplePost(String path) async {
+    try {
+      final url = '${widget.basePath}$path';
+      await http.post(Uri.parse(url));
+    } catch (_) {}
+  }
+
+  void _openInfoSheet() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      showDragHandle: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.info_outline, size: 20),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Info / Tools ($_hostText)',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 16,
+                      ),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.of(ctx).pop(),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                const Divider(height: 1),
+                ListTile(
+                  leading: const Icon(Icons.bolt_outlined),
+                  title: const Text('부스터 적용'),
+                  subtitle: const Text('부스터 아이템 사용'),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    _callSimplePost('weeing/booster');
+                  },
+                ),
+                const SizedBox(height: 8),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '※ 나중에 여기 ListTile을 복사해서\n 원하는 엔드포인트로 onTap만 바꾸면 됨.',
+                    style: TextStyle(fontSize: 11, color: Colors.black45),
+                  ),
+                ),
+                const SizedBox(height: 4),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   // ===== Mouse APIs =====
   // Delegated to MouseMode widget
 
@@ -459,9 +571,7 @@ class _LobbyScreenState extends State<LobbyScreen> {
                 children: [
                   LobbyHeader(
                     hostText: _hostText,
-                    onInfoTap: () {
-                      // Info 탭 동작 필요 시 구현
-                    },
+                    onInfoTap: _openInfoSheet,
                   ),
                   const SizedBox(height: 8),
                   LobbyWebRTCView(

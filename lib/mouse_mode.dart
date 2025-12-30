@@ -76,7 +76,12 @@ class _MouseModeState extends State<MouseMode> {
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => _sendMouseClick('left'),
-        onDoubleTap: () => _sendMouseClick('right'),
+        onDoubleTap: () async {
+          // 더블클릭: 좌클릭 두 번
+          await _sendMouseClick('left');
+          await _sendMouseClick('left');
+        },
+        onLongPress: () => _sendMouseClick('right'),
         onScaleStart: (details) {
           _accumDx = 0;
           _accumDy = 0;
@@ -110,7 +115,7 @@ class _MouseModeState extends State<MouseMode> {
         },
         child: const Center(
           child: Text(
-            'Trackpad mode\n(탭=좌클릭, 더블탭=우클릭, 드래그=이동)\n(두 손가락=화면 확대/이동)',
+            'Trackpad mode\n(탭=좌클릭, 길게=우클릭, 더블탭=더블클릭)\n(두 손가락=화면 확대/이동)',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: Colors.black26,
