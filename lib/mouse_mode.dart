@@ -25,7 +25,7 @@ class MouseMode extends StatefulWidget {
 class _MouseModeState extends State<MouseMode> {
   double _accumDx = 0;
   double _accumDy = 0;
-  static const double _pointerScale = 2.0;
+  static const double _pointerScale = 4.0;
 
   double _baseScale = 1.0;
   Offset _baseOffset = Offset.zero;

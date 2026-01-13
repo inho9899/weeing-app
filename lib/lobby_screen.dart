@@ -459,6 +459,64 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
+  Future<void> _callLogin(String id, String pw) async {
+    try {
+      _callSimplePost('weeing/login?id=$id&pw=$pw');
+    } catch (_) {}
+  }
+
+  void _showLoginDialog() {
+    final idController = TextEditingController();
+    final pwController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('로그인'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: idController,
+                decoration: const InputDecoration(
+                  labelText: 'ID',
+                  hintText: '아이디 입력',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: pwController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Password',
+                  hintText: '비밀번호 입력',
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('취소'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final id = idController.text.trim();
+                final pw = pwController.text.trim();
+                if (id.isNotEmpty && pw.isNotEmpty) {
+                  Navigator.of(ctx).pop();
+                  _callLogin(id, pw);
+                }
+              },
+              child: const Text('로그인'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   void _openInfoSheet() {
     showModalBottomSheet(
       context: context,
@@ -500,6 +558,24 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                   onTap: () {
                     Navigator.of(ctx).pop();
                     _callSimplePost('weeing/booster');
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.logout),
+                  title: const Text('로그아웃'),
+                  subtitle: const Text('현재 계정에서 로그아웃'),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    _callSimplePost('weeing/logout');
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.login),
+                  title: const Text('로그인'),
+                  subtitle: const Text('ID/PW로 로그인'),
+                  onTap: () {
+                    Navigator.of(ctx).pop();
+                    _showLoginDialog();
                   },
                 ),
                 const SizedBox(height: 8),
