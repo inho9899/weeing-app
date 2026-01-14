@@ -571,70 +571,82 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (ctx) {
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.info_outline, size: 20),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Info / Tools ($_hostText)',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 16,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.info_outline, size: 20),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Info / Tools ($_hostText)',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 16,
+                        ),
                       ),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.of(ctx).pop(),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.bolt_outlined),
-                  title: const Text('부스터 적용'),
-                  subtitle: const Text('부스터 아이템 사용'),
-                  onTap: () {
-                    Navigator.of(ctx).pop();
-                    _callSimplePost('weeing/booster');
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.logout),
-                  title: const Text('로그아웃'),
-                  subtitle: const Text('현재 계정에서 로그아웃'),
-                  onTap: () {
-                    Navigator.of(ctx).pop();
-                    _callSimplePost('weeing/logout');
-                  },
-                ),
-                ListTile(
-                  leading: const Icon(Icons.login),
-                  title: const Text('로그인'),
-                  subtitle: const Text('ID/PW로 로그인'),
-                  onTap: () {
-                    Navigator.of(ctx).pop();
-                    _showLoginDialog();
-                  },
-                ),
-                const SizedBox(height: 8),
-                const Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    '※ 나중에 여기 ListTile을 복사해서\n 원하는 엔드포인트로 onTap만 바꾸면 됨.',
-                    style: TextStyle(fontSize: 11, color: Colors.black45),
+                      const Spacer(),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.of(ctx).pop(),
+                      ),
+                    ],
                   ),
-                ),
-                const SizedBox(height: 4),
-              ],
+                  const SizedBox(height: 4),
+                  const Divider(height: 1),
+                  ListTile(
+                    leading: const Icon(Icons.bolt_outlined),
+                    title: const Text('부스터 적용'),
+                    subtitle: const Text('부스터 아이템 사용'),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      _callSimplePost('weeing/booster');
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.logout),
+                    title: const Text('로그아웃'),
+                    subtitle: const Text('현재 계정에서 로그아웃'),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      _callSimplePost('weeing/logout');
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.login),
+                    title: const Text('로그인'),
+                    subtitle: const Text('ID/PW로 로그인'),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      _showLoginDialog();
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.exit_to_app),
+                    title: const Text('종료'),
+                    subtitle: const Text('Weeing 프로세스 종료'),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      _callSimplePost('weeing/exit');
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '※ 나중에 여기 ListTile을 복사해서\n 원하는 엔드포인트로 onTap만 바꾸면 됨.',
+                      style: TextStyle(fontSize: 11, color: Colors.black45),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                ],
+              ),
             ),
           ),
         );
