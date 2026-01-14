@@ -465,35 +465,82 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     } catch (_) {}
   }
 
-  void _showLoginDialog() {
+  void _showLoginDialog() async {
     final idController = TextEditingController();
     final pwController = TextEditingController();
+    
+    // 매크로 계정 목록 불러오기
+    List<Map<String, dynamic>> macros = [];
+    try {
+      final res = await http.get(Uri.parse('${widget.basePath}weeing/macros'));
+      if (res.statusCode == 200) {
+        final payload = jsonDecode(res.body);
+        final data = payload['data'] as List?;
+        if (data != null) {
+          macros = data.map((e) => Map<String, dynamic>.from(e)).toList();
+        }
+      }
+    } catch (_) {}
+
+    if (!mounted) return;
 
     showDialog(
       context: context,
       builder: (ctx) {
         return AlertDialog(
           title: const Text('로그인'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: idController,
-                decoration: const InputDecoration(
-                  labelText: 'ID',
-                  hintText: '아이디 입력',
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // 매크로 선택 드롭다운
+                if (macros.isNotEmpty) ...[
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      '빠른 선택',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: macros.map((macro) {
+                      return ActionChip(
+                        label: Text(macro['name'] ?? 'Unknown'),
+                        onPressed: () {
+                          idController.text = macro['id'] ?? '';
+                          pwController.text = macro['pw'] ?? '';
+                        },
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 16),
+                  const Divider(),
+                  const SizedBox(height: 8),
+                ],
+                TextField(
+                  controller: idController,
+                  decoration: const InputDecoration(
+                    labelText: 'ID',
+                    hintText: '아이디 입력',
+                  ),
                 ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: pwController,
-                obscureText: true,
-                decoration: const InputDecoration(
-                  labelText: 'Password',
-                  hintText: '비밀번호 입력',
+                const SizedBox(height: 12),
+                TextField(
+                  controller: pwController,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Password',
+                    hintText: '비밀번호 입력',
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
           actions: [
             TextButton(
