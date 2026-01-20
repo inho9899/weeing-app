@@ -636,6 +636,24 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                       _callSimplePost('weeing/exit');
                     },
                   ),
+                  ListTile(
+                    leading: const Icon(Icons.logout),
+                    title: const Text('마빌가기'),
+                    subtitle: const Text('마빌로 이동'),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      _callSimplePost('weeing/gomyster');
+                    },
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.login),
+                    title: const Text('맵으로 돌아오기'),
+                    subtitle: const Text('마빌에서 나가기'),
+                    onTap: () {
+                      Navigator.of(ctx).pop();
+                      _callSimplePost('weeing/exitmyster');
+                    },
+                  ),
                   const SizedBox(height: 8),
                   const Align(
                     alignment: Alignment.centerLeft,
