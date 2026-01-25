@@ -8,6 +8,8 @@ class MouseMode extends StatefulWidget {
   final Function(Offset) onOffsetChanged;
   final double initialScale;
   final Offset initialOffset;
+  // 스트리밍 영역 터치 콜백 (외부에서 사용할 경우)
+  final Function(double touchX, double touchY, double viewWidth, double viewHeight)? onStreamTap;
 
   const MouseMode({
     super.key,
@@ -16,6 +18,7 @@ class MouseMode extends StatefulWidget {
     required this.onOffsetChanged,
     this.initialScale = 1.0,
     this.initialOffset = Offset.zero,
+    this.onStreamTap,
   });
 
   @override
@@ -32,6 +35,8 @@ class _MouseModeState extends State<MouseMode> {
 
   String get _mouseMoveUrl => '${widget.basePath}mouse/MouseMove';
   String get _mouseClickUrl => '${widget.basePath}mouse/MouseClick';
+  String get _mouseMoveToUrl => '${widget.basePath}mouse/MouseMoveTo';
+  String get _mouseClickAtUrl => '${widget.basePath}mouse/MouseClickAt';
 
   Future<void> _sendMouseMove(int dx, int dy) async {
     try {
@@ -48,6 +53,37 @@ class _MouseModeState extends State<MouseMode> {
       await http.post(Uri.parse(url));
     } catch (e) {
       debugPrint('MouseMode click error: $e');
+    }
+  }
+
+  /// 스트리밍 영역 터치 시 절대 좌표로 마우스 이동
+  Future<void> _sendMouseMoveTo(double touchX, double touchY, double viewWidth, double viewHeight) async {
+    try {
+      final uri = Uri.parse(_mouseMoveToUrl).replace(queryParameters: {
+        'touch_x': touchX.toString(),
+        'touch_y': touchY.toString(),
+        'view_width': viewWidth.toString(),
+        'view_height': viewHeight.toString(),
+      });
+      await http.post(uri);
+    } catch (e) {
+      debugPrint('MouseMode moveTo error: $e');
+    }
+  }
+
+  /// 스트리밍 영역 터치 시 해당 좌표로 이동 후 클릭
+  Future<void> _sendMouseClickAt(double touchX, double touchY, double viewWidth, double viewHeight, String button) async {
+    try {
+      final uri = Uri.parse(_mouseClickAtUrl).replace(queryParameters: {
+        'touch_x': touchX.toString(),
+        'touch_y': touchY.toString(),
+        'view_width': viewWidth.toString(),
+        'view_height': viewHeight.toString(),
+        'button': button,
+      });
+      await http.post(uri);
+    } catch (e) {
+      debugPrint('MouseMode clickAt error: $e');
     }
   }
 

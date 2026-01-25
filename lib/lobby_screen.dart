@@ -246,6 +246,16 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     _pc = await createPeerConnection({
       'iceServers': [
         {'urls': 'stun:stun.l.google.com:19302'},
+        {
+          'urls': 'turn:openrelay.metered.ca:80',
+          'username': 'openrelayproject',
+          'credential': 'openrelayproject',
+        },
+        {
+          'urls': 'turn:openrelay.metered.ca:443',
+          'username': 'openrelayproject',
+          'credential': 'openrelayproject',
+        },
       ],
       'sdpSemantics': 'unified-plan',
     });
@@ -704,6 +714,113 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   }
 
   // =========================================================
+  // 스트리밍 영역 터치 → 마우스 이동
+  // =========================================================
+
+  String get _mouseMoveToUrl => '${widget.basePath}mouse/MouseMoveTo';
+  String get _mouseClickAtUrl => '${widget.basePath}mouse/MouseClickAt';
+
+  /// 확대/이동을 고려하여 터치 좌표를 원본 스트림 좌표로 변환
+  /// 
+  /// 스트림 뷰는 중심 기준으로 확대되고 offset만큼 이동됨
+  /// Transform: translate(offset) -> scale(scale, center)
+  /// 역변환: (touchPos - viewCenter - offset) / scale + viewCenter
+  Offset _transformTouchToStreamCoord(
+    double touchX,
+    double touchY,
+    double viewWidth,
+    double viewHeight,
+  ) {
+    // 뷰의 중심점
+    final centerX = viewWidth / 2;
+    final centerY = viewHeight / 2;
+
+    // 1. offset 보정 (이동된 만큼 역으로)
+    // 2. scale 보정 (확대된 만큼 역으로, 중심 기준)
+    // 
+    // 원본 좌표 = (터치좌표 - 중심 - offset) / scale + 중심
+    final streamX = (touchX - centerX - _streamOffset.dx) / _streamScale + centerX;
+    final streamY = (touchY - centerY - _streamOffset.dy) / _streamScale + centerY;
+
+    return Offset(streamX, streamY);
+  }
+
+  Future<void> _sendMouseMoveTo(double touchX, double touchY, double viewWidth, double viewHeight) async {
+    try {
+      final uri = Uri.parse(_mouseMoveToUrl).replace(queryParameters: {
+        'touch_x': touchX.toString(),
+        'touch_y': touchY.toString(),
+        'view_width': viewWidth.toString(),
+        'view_height': viewHeight.toString(),
+      });
+      await http.post(uri);
+    } catch (e) {
+      debugPrint('MouseMoveTo error: $e');
+    }
+  }
+
+  Future<void> _sendMouseClickAt(double touchX, double touchY, double viewWidth, double viewHeight, String button) async {
+    try {
+      final uri = Uri.parse(_mouseClickAtUrl).replace(queryParameters: {
+        'touch_x': touchX.toString(),
+        'touch_y': touchY.toString(),
+        'view_width': viewWidth.toString(),
+        'view_height': viewHeight.toString(),
+        'button': button,
+      });
+      await http.post(uri);
+    } catch (e) {
+      debugPrint('MouseClickAt error: $e');
+    }
+  }
+
+  /// 마우스 모드에서 스트리밍 영역을 터치하면 해당 좌표로 마우스 이동
+  Widget _buildTouchableStreamView() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // 16:9 비율로 높이 계산
+        final viewWidth = constraints.maxWidth;
+        final viewHeight = viewWidth * 9 / 16;
+
+        return GestureDetector(
+          onTapDown: (details) {
+            // 터치 좌표를 확대/이동 보정하여 원본 스트림 좌표로 변환
+            final transformed = _transformTouchToStreamCoord(
+              details.localPosition.dx,
+              details.localPosition.dy,
+              viewWidth,
+              viewHeight,
+            );
+            
+            // 서버로 변환된 좌표 전송 → 마우스 이동
+            _sendMouseMoveTo(transformed.dx, transformed.dy, viewWidth, viewHeight);
+          },
+          onDoubleTap: () {
+            // 더블탭은 기존 위치에서 더블클릭 (MouseMode 위젯에서 처리)
+          },
+          onLongPressStart: (details) {
+            // 터치 좌표를 확대/이동 보정
+            final transformed = _transformTouchToStreamCoord(
+              details.localPosition.dx,
+              details.localPosition.dy,
+              viewWidth,
+              viewHeight,
+            );
+            // 길게 누르면 해당 위치로 이동 후 우클릭
+            _sendMouseClickAt(transformed.dx, transformed.dy, viewWidth, viewHeight, 'right');
+          },
+          child: LobbyWebRTCView(
+            renderer: _renderer,
+            connected: _webrtcConnected,
+            scale: _streamScale,
+            offset: _streamOffset,
+          ),
+        );
+      },
+    );
+  }
+
+  // =========================================================
   // UI
   // =========================================================
 
@@ -727,12 +844,15 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                     onInfoTap: _openInfoSheet,
                   ),
                   const SizedBox(height: 8),
-                  LobbyWebRTCView(
-                    renderer: _renderer,
-                    connected: _webrtcConnected,
-                    scale: _streamScale,
-                    offset: _streamOffset,
-                  ),
+                  // 마우스 모드일 때 스트리밍 영역 터치 가능
+                  _trackpadMode
+                      ? _buildTouchableStreamView()
+                      : LobbyWebRTCView(
+                          renderer: _renderer,
+                          connected: _webrtcConnected,
+                          scale: _streamScale,
+                          offset: _streamOffset,
+                        ),
                   const SizedBox(height: 16),
                   if (!_trackpadMode)
                     LobbyControls(
