@@ -2,6 +2,21 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+/// 마우스 위치 데이터 클래스
+class MousePosition {
+  final int x;
+  final int y;
+  final double normalizedX; // 스트리밍 영역 기준 0.0 ~ 1.0
+  final double normalizedY; // 스트리밍 영역 기준 0.0 ~ 1.0
+
+  MousePosition({
+    required this.x,
+    required this.y,
+    required this.normalizedX,
+    required this.normalizedY,
+  });
+}
+
 /// Lobby API 서비스 클래스
 class LobbyApiService {
   final String basePath;
@@ -184,6 +199,46 @@ class LobbyApiService {
   // =========================================================
   // Mouse API
   // =========================================================
+
+  String get _mousePositionUrl => '${basePath}mouse/position';
+  String get _mouseMoveUrl => '${basePath}mouse/MouseMove';
+
+  /// 현재 마우스 위치 가져오기 (정규화 좌표 포함)
+  Future<MousePosition?> getMousePosition() async {
+    try {
+      final res = await http.get(Uri.parse(_mousePositionUrl));
+      if (res.statusCode != 200) return null;
+      final data = jsonDecode(res.body);
+      return MousePosition(
+        x: data['x'] ?? 0,
+        y: data['y'] ?? 0,
+        normalizedX: (data['normalized_x'] ?? 0.5).toDouble(),
+        normalizedY: (data['normalized_y'] ?? 0.5).toDouble(),
+      );
+    } catch (e) {
+      debugPrint('getMousePosition error: $e');
+      return null;
+    }
+  }
+
+  /// 마우스 상대 이동 (dx, dy) + 새 위치 반환
+  Future<MousePosition?> sendMouseMove(int dx, int dy) async {
+    try {
+      final url = '$_mouseMoveUrl/$dx/$dy';
+      final res = await http.post(Uri.parse(url));
+      if (res.statusCode != 200) return null;
+      final data = jsonDecode(res.body);
+      return MousePosition(
+        x: data['x'] ?? 0,
+        y: data['y'] ?? 0,
+        normalizedX: (data['normalized_x'] ?? 0.5).toDouble(),
+        normalizedY: (data['normalized_y'] ?? 0.5).toDouble(),
+      );
+    } catch (e) {
+      debugPrint('sendMouseMove error: $e');
+      return null;
+    }
+  }
 
   Future<void> sendMouseMoveTo(
     double touchX,

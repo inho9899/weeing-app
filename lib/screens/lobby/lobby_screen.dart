@@ -51,6 +51,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
   double _streamScale = 1.0;
   Offset _streamOffset = Offset.zero;
+  Size _streamViewSize = const Size(400, 225); // 16:9 기본값
 
   // ===== Wheel controllers =====
   late FixedExtentScrollController _cycleCtrl;
@@ -441,6 +442,15 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       builder: (context, constraints) {
         final viewWidth = constraints.maxWidth;
         final viewHeight = viewWidth * 9 / 16;
+        
+        // 스트림 뷰 사이즈 업데이트 (MouseMode에서 사용)
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_streamViewSize.width != viewWidth || _streamViewSize.height != viewHeight) {
+            setState(() {
+              _streamViewSize = Size(viewWidth, viewHeight);
+            });
+          }
+        });
 
         return GestureDetector(
           onTapDown: (details) {
@@ -731,6 +741,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                       basePath: widget.basePath,
                       initialScale: _streamScale,
                       initialOffset: _streamOffset,
+                      streamViewSize: _streamViewSize,
                       onScaleChanged: (s) => setState(() => _streamScale = s),
                       onOffsetChanged: (o) => setState(() => _streamOffset = o),
                       commandController: _commandController,
