@@ -8,9 +8,9 @@ class LobbyControls extends StatelessWidget {
   final VoidCallback onPause;
   final Widget cycle;
   final Widget startTime;
-  final TextEditingController commandController;
-  final VoidCallback onSend;
-  final VoidCallback onConvertMode;
+
+  final bool holdStartTime;
+  final ValueChanged<bool> onHoldToggle;
 
   const LobbyControls({
     super.key,
@@ -21,9 +21,9 @@ class LobbyControls extends StatelessWidget {
     required this.onPause,
     required this.cycle,
     required this.startTime,
-    required this.commandController,
-    required this.onSend,
-    required this.onConvertMode,
+
+    required this.holdStartTime,
+    required this.onHoldToggle,
   });
 
   @override
@@ -75,44 +75,46 @@ class LobbyControls extends StatelessWidget {
           children: [
             Expanded(child: cycle),
             const SizedBox(width: 8),
-            Expanded(child: startTime),
-          ],
-        ),
-        const SizedBox(height: 20),
-        TextField(
-          controller: commandController,
-          decoration: InputDecoration(
-            filled: true,
-            fillColor: Colors.white,
-            hintText: '메시지 입력...',
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(6),
-              borderSide: BorderSide.none,
-            ),
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-              vertical: 10,
-            ),
-          ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
             Expanded(
-              child: _greyButton(
-                label: 'Send',
-                onTap: onSend,
+              child: Column(
+                children: [
+                  GestureDetector(
+                    onTap: () => onHoldToggle(!holdStartTime),
+                    child: Container(
+                      height: 32,
+                      decoration: BoxDecoration(
+                        color: holdStartTime ? Colors.orange : Colors.grey[400],
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            holdStartTime ? Icons.lock_outline : Icons.lock_open,
+                            size: 14,
+                            color: Colors.white,
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            holdStartTime ? 'HOLD ON' : 'HOLD OFF',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  startTime,
+                ],
               ),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: _greyButton(
-                label: '한/영 전환',
-                onTap: onConvertMode,
-              ),
-            ),
           ],
         ),
+
       ],
     );
   }

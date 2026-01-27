@@ -42,6 +42,8 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
   final TextEditingController _commandController = TextEditingController();
   Timer? _pollTimer;
+  bool _holdStartTime = false;
+
   bool _initialStatusFetched = false;
 
   double _streamScale = 1.0;
@@ -380,8 +382,10 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
       setState(() {
         if (expCycle != null) _cycle = expCycle;
-        if (startH != null) _startHour = startH;
-        if (startM != null) _startMinute = startM;
+        if (!_holdStartTime) {
+          if (startH != null) _startHour = startH;
+          if (startM != null) _startMinute = startM;
+        }
         if (runningBuild != null) {
           _runningBuildFromStatus = runningBuild;
           if (_builds.contains(runningBuild)) {
@@ -880,9 +884,8 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                         onHourChanged: _onHourChanged,
                         onMinuteChanged: _onMinuteChanged,
                       ),
-                      commandController: _commandController,
-                      onSend: _handleSend,
-                      onConvertMode: _handle_convert,
+                      holdStartTime: _holdStartTime,
+                      onHoldToggle: (v) => setState(() => _holdStartTime = v),
                     )
                   else
                     MouseMode(
@@ -891,6 +894,9 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                       initialOffset: _streamOffset,
                       onScaleChanged: (s) => setState(() => _streamScale = s),
                       onOffsetChanged: (o) => setState(() => _streamOffset = o),
+                      commandController: _commandController,
+                      onSend: _handleSend,
+                      onConvertMode: _handle_convert,
                     ),
                   const SizedBox(height: 24),
                   Align(

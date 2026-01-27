@@ -10,6 +10,9 @@ class MouseMode extends StatefulWidget {
   final Offset initialOffset;
   // 스트리밍 영역 터치 콜백 (외부에서 사용할 경우)
   final Function(double touchX, double touchY, double viewWidth, double viewHeight)? onStreamTap;
+  final TextEditingController commandController;
+  final VoidCallback onSend;
+  final VoidCallback onConvertMode;
 
   const MouseMode({
     super.key,
@@ -19,6 +22,9 @@ class MouseMode extends StatefulWidget {
     this.initialScale = 1.0,
     this.initialOffset = Offset.zero,
     this.onStreamTap,
+    required this.commandController,
+    required this.onSend,
+    required this.onConvertMode,
   });
 
   @override
@@ -109,54 +115,129 @@ class _MouseModeState extends State<MouseMode> {
           ),
         ],
       ),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () => _sendMouseClick('left'),
-        onDoubleTap: () async {
-          // 더블클릭: 좌클릭 두 번
-          await _sendMouseClick('left');
-          await _sendMouseClick('left');
-        },
-        onLongPress: () => _sendMouseClick('right'),
-        onScaleStart: (details) {
-          _accumDx = 0;
-          _accumDy = 0;
-          _baseScale = widget.initialScale;
-          _baseOffset = widget.initialOffset;
-        },
-        onScaleUpdate: (details) {
-          if (details.pointerCount == 1) {
-            // Mouse Move
-            _accumDx += details.focalPointDelta.dx * _pointerScale;
-            _accumDy += details.focalPointDelta.dy * _pointerScale;
+      child: Column(
+        children: [
+          Expanded(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => _sendMouseClick('left'),
+              onDoubleTap: () async {
+                // 더블클릭: 좌클릭 두 번
+                await _sendMouseClick('left');
+                await _sendMouseClick('left');
+              },
+              onLongPress: () => _sendMouseClick('right'),
+              onScaleStart: (details) {
+                _accumDx = 0;
+                _accumDy = 0;
+                _baseScale = widget.initialScale;
+                _baseOffset = widget.initialOffset;
+              },
+              onScaleUpdate: (details) {
+                if (details.pointerCount == 1) {
+                  // Mouse Move
+                  _accumDx += details.focalPointDelta.dx * _pointerScale;
+                  _accumDy += details.focalPointDelta.dy * _pointerScale;
 
-            int dxInt = _accumDx.round();
-            int dyInt = _accumDy.round();
+                  int dxInt = _accumDx.round();
+                  int dyInt = _accumDy.round();
 
-            if (dxInt == 0 && dyInt == 0) return;
+                  if (dxInt == 0 && dyInt == 0) return;
 
-            _accumDx -= dxInt;
-            _accumDy -= dyInt;
+                  _accumDx -= dxInt;
+                  _accumDy -= dyInt;
 
-            _sendMouseMove(dxInt, dyInt);
-          } else if (details.pointerCount >= 2) {
-            // Zoom & Pan for Stream
-            final newScale = (_baseScale * details.scale).clamp(1.0, 5.0);
-            widget.onScaleChanged(newScale);
+                  _sendMouseMove(dxInt, dyInt);
+                } else if (details.pointerCount >= 2) {
+                  // Zoom & Pan for Stream
+                  final newScale = (_baseScale * details.scale).clamp(1.0, 5.0);
+                  widget.onScaleChanged(newScale);
 
-            // Pan: Use the current offset from the widget and add the per-update delta
-            final newOffset = widget.initialOffset + details.focalPointDelta;
-            widget.onOffsetChanged(newOffset);
-          }
-        },
-        child: const Center(
-          child: Text(
-            'Trackpad mode\n(탭=좌클릭, 길게=우클릭, 더블탭=더블클릭)\n(두 손가락=화면 확대/이동)',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: Colors.black26,
-              fontSize: 13,
+                  // Pan: Use the current offset from the widget and add the per-update delta
+                  final newOffset = widget.initialOffset + details.focalPointDelta;
+                  widget.onOffsetChanged(newOffset);
+                }
+              },
+              child: const Center(
+                child: Text(
+                  'Trackpad mode\n(탭=좌클릭, 길게=우클릭, 더블탭=더블클릭)\n(두 손가락=화면 확대/이동)',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Colors.black26,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
             ),
+          ),
+          // 하단 입력 창 및 버튼
+          Padding(
+            padding: const EdgeInsets.all(12.0),
+            child: Column(
+              children: [
+                TextField(
+                  controller: widget.commandController,
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: Colors.grey[100],
+                    hintText: '메시지 입력...',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(6),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _greyButton(
+                        label: 'Send',
+                        onTap: widget.onSend,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _greyButton(
+                        label: '한/영 전환',
+                        onTap: widget.onConvertMode,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _greyButton({
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return SizedBox(
+      height: 40,
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF757575),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(6),
+          ),
+          padding: EdgeInsets.zero,
+        ),
+        onPressed: onTap,
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
           ),
         ),
       ),
