@@ -4,7 +4,11 @@ class LobbyHeader extends StatelessWidget {
   final String hostText;
   final VoidCallback onInfoTap;
 
-  const LobbyHeader({super.key, required this.hostText, required this.onInfoTap});
+  const LobbyHeader({
+    super.key,
+    required this.hostText,
+    required this.onInfoTap,
+  });
 
   @override
   Widget build(BuildContext context) {

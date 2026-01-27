@@ -42,9 +42,9 @@ class LobbyWebRTCView extends StatelessWidget {
               if (!connected)
                 Container(
                   color: Colors.black.withOpacity(0.35),
-                  child: Column(
+                  child: const Column(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: const [
+                    children: [
                       CircularProgressIndicator(
                         strokeWidth: 2.5,
                         valueColor: AlwaysStoppedAnimation(Colors.white),

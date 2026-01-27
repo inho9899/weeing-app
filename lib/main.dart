@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'config_screen.dart';
 
-// flutterfire configure 로 생성된 파일
 import 'firebase_options.dart';
+import 'screens/config/config_screen.dart';
 
 /// 백그라운드/종료 상태에서 수신할 때 호출되는 handler
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {

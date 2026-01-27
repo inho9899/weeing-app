@@ -4,16 +4,17 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:weeing_app/widgets/lobby_header.dart';
-import 'package:weeing_app/widgets/lobby_webrtc_view.dart';
-import 'package:weeing_app/widgets/controls.dart';
-import 'package:weeing_app/widgets/trackpad_area.dart';
-import 'package:weeing_app/widgets/cycle_control.dart';
-import 'package:weeing_app/widgets/start_time_control.dart';
-import 'package:weeing_app/mouse_mode.dart';
+
+import 'widgets/lobby_header.dart';
+import 'widgets/lobby_webrtc_view.dart';
+import 'widgets/lobby_controls.dart';
+import 'widgets/cycle_control.dart';
+import 'widgets/start_time_control.dart';
+import 'widgets/mouse_mode.dart';
+import 'services/lobby_api_service.dart';
 
 class LobbyScreen extends StatefulWidget {
-  final String basePath; // 예: http://192.168.35.179:8000/
+  final String basePath;
   const LobbyScreen({super.key, required this.basePath});
 
   @override
@@ -21,7 +22,7 @@ class LobbyScreen extends StatefulWidget {
 }
 
 class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
-  // ===== WebRTC 화면 스트림 =====
+  // ===== WebRTC =====
   RTCPeerConnection? _pc;
   RTCDataChannel? _inputChannel;
   final RTCVideoRenderer _renderer = RTCVideoRenderer();
@@ -31,7 +32,10 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   StreamSubscription? _signalingSubscription;
   String? _senderPeerId;
 
-  // ===== 상태 값 =====
+  // ===== API Service =====
+  late final LobbyApiService _api;
+
+  // ===== State =====
   int _cycle = 0;
   int _startHour = DateTime.now().hour;
   int _startMinute = DateTime.now().minute;
@@ -43,7 +47,6 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   final TextEditingController _commandController = TextEditingController();
   Timer? _pollTimer;
   bool _holdStartTime = false;
-
   bool _initialStatusFetched = false;
 
   double _streamScale = 1.0;
@@ -56,18 +59,6 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
   // ===== Trackpad mode =====
   bool _trackpadMode = false;
-
-  // ===== API URL =====
-  String get _statusUrl => '${widget.basePath}status/';
-  String get _buildListUrl => '${widget.basePath}build/list';
-  String get _setCycleUrl => '${widget.basePath}status/cycle/set';
-  String get _startTimeUrl => '${widget.basePath}status/start_time';
-  String get _inputSequenceUrl => '${widget.basePath}input/sequence';
-  String get _startUrl =>
-      '${widget.basePath}weeing/start/${Uri.encodeComponent(_currentMap)}';
-  String get _pauseUrl => '${widget.basePath}weeing/pause';
-  String get _resumeUrl => '${widget.basePath}weeing/resume';
-  String get _convertUrl => '${widget.basePath}input/convert_mode';
 
   String get _hostText {
     try {
@@ -82,6 +73,8 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _api = LobbyApiService(basePath: widget.basePath);
+
     _cycleCtrl = FixedExtentScrollController();
     _hourCtrl = FixedExtentScrollController();
     _minCtrl = FixedExtentScrollController();
@@ -105,39 +98,36 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.resumed) {
-      // 앱이 foreground로 돌아올 때 WebRTC 재연결
       debugPrint('App resumed, reconnecting WebRTC...');
       _reconnectWebRTC();
     }
   }
 
   void _reconnectWebRTC() async {
-    debugPrint('WebRTC: Reconnecting (IP Switching or Resume)...');
-    
-    // 1. 모든 기존 연결 및 상태를 명시적으로 파괴
+    debugPrint('WebRTC: Reconnecting...');
+
     _webrtcRetryTimer?.cancel();
     _webrtcRetryTimer = null;
-    
+
     _signalingSubscription?.cancel();
     _signalingSubscription = null;
-    
+
     _signalingChannel?.sink.close();
     _signalingChannel = null;
-    
+
     _inputChannel?.close();
     _inputChannel = null;
-    
+
     await _pc?.close();
     _pc = null;
 
     _senderPeerId = null;
-    
+
     setState(() {
       _webrtcConnected = false;
       _renderer.srcObject = null;
     });
 
-    // 2. 약간의 지연 후 새 서버에 연결
     Future.delayed(const Duration(milliseconds: 100), () {
       if (mounted) _connectWebRTC();
     });
@@ -173,14 +163,14 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     _signalingChannel?.sink.close();
 
     try {
-      _signalingChannel = WebSocketChannel.connect(Uri.parse(_webrtcSignalingUrl));
+      _signalingChannel =
+          WebSocketChannel.connect(Uri.parse(_webrtcSignalingUrl));
       _signalingSubscription = _signalingChannel!.stream.listen(
         (message) => _onSignalingMessage(message),
         onDone: () => _scheduleWebRTCRetry(),
         onError: (_) => _scheduleWebRTCRetry(),
       );
 
-      // Join room
       _signalingChannel!.sink.add(jsonEncode({
         'type': 'join',
         'role': 'receiver',
@@ -196,7 +186,8 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   void _scheduleWebRTCRetry() {
     setState(() => _webrtcConnected = false);
     _webrtcRetryTimer?.cancel();
-    _webrtcRetryTimer = Timer(const Duration(seconds: 3), () => _connectWebRTC());
+    _webrtcRetryTimer =
+        Timer(const Duration(seconds: 3), () => _connectWebRTC());
   }
 
   void _onSignalingMessage(String message) async {
@@ -216,7 +207,8 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
         _senderPeerId = data['fromPeerId'];
         debugPrint('WebRTC: Received offer from $_senderPeerId');
         if (_pc == null) await _createPeerConnection();
-        await _pc!.setRemoteDescription(RTCSessionDescription(data['sdp'], 'offer'));
+        await _pc!
+            .setRemoteDescription(RTCSessionDescription(data['sdp'], 'offer'));
         final answer = await _pc!.createAnswer();
         await _pc!.setLocalDescription(answer);
         _signalingChannel!.sink.add(jsonEncode({
@@ -280,17 +272,20 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       debugPrint('WebRTC: Connection state changed: $state');
       if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
         setState(() => _webrtcConnected = true);
-      } else if (state == RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
+      } else if (state ==
+              RTCPeerConnectionState.RTCPeerConnectionStateDisconnected ||
           state == RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
         setState(() => _webrtcConnected = false);
       }
     };
 
     _pc!.onTrack = (event) {
-      debugPrint('WebRTC: onTrack kind=${event.track.kind} streams=${event.streams.length}');
+      debugPrint(
+          'WebRTC: onTrack kind=${event.track.kind} streams=${event.streams.length}');
       if (event.track.kind == 'video') {
         setState(() {
-          _renderer.srcObject = event.streams.isNotEmpty ? event.streams[0] : null;
+          _renderer.srcObject =
+              event.streams.isNotEmpty ? event.streams[0] : null;
         });
       }
     };
@@ -301,200 +296,194 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   }
 
   // =========================================================
-  // API helpers
+  // API calls
   // =========================================================
 
   Future<void> _fetchBuildList() async {
-    try {
-      final res = await http.get(Uri.parse(_buildListUrl));
-      if (res.statusCode != 200) return;
-      final payload = jsonDecode(res.body);
-      final list =
-          (payload['data'] as List?)?.map((e) => e.toString()).toList() ?? [];
-
-      setState(() {
-        _builds = list;
-        if (_runningBuildFromStatus != null &&
-            _runningBuildFromStatus!.isNotEmpty &&
-            _runningBuildFromStatus != 'None' &&
-            _builds.contains(_runningBuildFromStatus)) {
-          _currentMap = _runningBuildFromStatus!;
-        } else if (_currentMap.isEmpty && _builds.isNotEmpty) {
-          _currentMap = _builds[0];
-        }
-      });
-    } catch (_) {}
-  }
-
-  Map<String, String> _parseStatusData(String? dataStr) {
-    final out = <String, String>{};
-    if (dataStr == null) return out;
-    for (final seg in dataStr.split(',')) {
-      final parts = seg.split(':');
-      if (parts.isEmpty) continue;
-      final key = parts[0].trim();
-      final value = parts.sublist(1).join(':').trim();
-      if (key.isEmpty) continue;
-      out[key] = value;
-    }
-    return out;
+    final list = await _api.fetchBuildList();
+    setState(() {
+      _builds = list;
+      if (_runningBuildFromStatus != null &&
+          _runningBuildFromStatus!.isNotEmpty &&
+          _runningBuildFromStatus != 'None' &&
+          _builds.contains(_runningBuildFromStatus)) {
+        _currentMap = _runningBuildFromStatus!;
+      } else if (_currentMap.isEmpty && _builds.isNotEmpty) {
+        _currentMap = _builds[0];
+      }
+    });
   }
 
   Future<void> _fetchStatus() async {
-    try {
-      final res = await http.get(Uri.parse(_statusUrl));
-      if (res.statusCode != 200) return;
+    final parsed = await _api.fetchStatus();
+    if (parsed == null) return;
 
-      final payload = jsonDecode(res.body);
-      final dataStr = payload['data'] as String?;
-      final parsed = _parseStatusData(dataStr);
+    int? expCycle;
+    int? startH;
+    int? startM;
+    String? runningBuild;
 
-      int? expCycle;
-      int? startH;
-      int? startM;
-      String? runningBuild;
-
-      if (parsed.containsKey('exp_cycle')) {
-        final raw = (parsed['exp_cycle'] ?? '').trim();
-        final n = int.tryParse(raw) ?? double.tryParse(raw)?.round();
-        if (n != null) expCycle = n.clamp(0, 99).toInt();
-      }
-      if (parsed.containsKey('start_time')) {
-        final raw = parsed['start_time'] ?? '';
-        final parts = raw.split(':');
-        if (parts.length >= 2) {
-          final hRaw = parts[0].trim();
-          final mRaw = parts[1].trim();
-          final h = int.tryParse(hRaw) ?? double.tryParse(hRaw)?.round();
-          final m = int.tryParse(mRaw) ?? double.tryParse(mRaw)?.round();
-          if (h != null && m != null) {
-            startH = h.clamp(0, 23).toInt();
-            startM = m.clamp(0, 59).toInt();
-          }
+    if (parsed.containsKey('exp_cycle')) {
+      final raw = (parsed['exp_cycle'] ?? '').trim();
+      final n = int.tryParse(raw) ?? double.tryParse(raw)?.round();
+      if (n != null) expCycle = n.clamp(0, 99).toInt();
+    }
+    if (parsed.containsKey('start_time')) {
+      final raw = parsed['start_time'] ?? '';
+      final parts = raw.split(':');
+      if (parts.length >= 2) {
+        final hRaw = parts[0].trim();
+        final mRaw = parts[1].trim();
+        final h = int.tryParse(hRaw) ?? double.tryParse(hRaw)?.round();
+        final m = int.tryParse(mRaw) ?? double.tryParse(mRaw)?.round();
+        if (h != null && m != null) {
+          startH = h.clamp(0, 23).toInt();
+          startM = m.clamp(0, 59).toInt();
         }
       }
-      if (parsed.containsKey('running_build')) {
-        final rb = (parsed['running_build'] ?? '').trim();
-        if (rb.isNotEmpty && rb != 'None') {
-          runningBuild = rb;
+    }
+    if (parsed.containsKey('running_build')) {
+      final rb = (parsed['running_build'] ?? '').trim();
+      if (rb.isNotEmpty && rb != 'None') {
+        runningBuild = rb;
+      }
+    }
+
+    setState(() {
+      if (expCycle != null) _cycle = expCycle;
+      if (!_holdStartTime) {
+        if (startH != null) _startHour = startH;
+        if (startM != null) _startMinute = startM;
+      }
+      if (runningBuild != null) {
+        _runningBuildFromStatus = runningBuild;
+        if (_builds.contains(runningBuild)) {
+          _currentMap = runningBuild;
         }
       }
+    });
 
-      setState(() {
-        if (expCycle != null) _cycle = expCycle;
-        if (!_holdStartTime) {
-          if (startH != null) _startHour = startH;
-          if (startM != null) _startMinute = startM;
-        }
-        if (runningBuild != null) {
-          _runningBuildFromStatus = runningBuild;
-          if (_builds.contains(runningBuild)) {
-            _currentMap = runningBuild;
-          }
-        }
-      });
-
-      // 초기 1회만 스크롤 위치를 맞춤 (사용자 조작 방해 방지)
-      if (!_initialStatusFetched) {
-        if (expCycle != null) _cycleCtrl.jumpToItem(_cycle);
-        if (startH != null) _hourCtrl.jumpToItem(_startHour);
-        if (startM != null) _minCtrl.jumpToItem(_startMinute);
-        _initialStatusFetched = true;
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _setCycleOnServer(int value) async {
-    try {
-      final uri = Uri.parse(_setCycleUrl);
-      await http.post(
-        uri,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(value),
-      );
-    } catch (_) {}
-  }
-
-  Future<void> _sendStartTimeDelta(int hDelta, int mDelta) async {
-    try {
-      await http.post(
-        Uri.parse(_startTimeUrl),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'hour': hDelta, 'minute': mDelta}),
-      );
-    } catch (_) {}
+    if (!_initialStatusFetched) {
+      if (expCycle != null) _cycleCtrl.jumpToItem(_cycle);
+      if (startH != null) _hourCtrl.jumpToItem(_startHour);
+      if (startM != null) _minCtrl.jumpToItem(_startMinute);
+      _initialStatusFetched = true;
+    }
   }
 
   Future<void> _handleStart() async {
     if (_currentMap.isEmpty) return;
-    try {
-      final res = await http.post(Uri.parse(_startUrl));
-      if (res.statusCode == 409) {
-        final resumeRes = await http.post(Uri.parse(_resumeUrl));
-        if (resumeRes.statusCode != 200) {
-          throw Exception('Resume failed');
-        }
-      } else if (res.statusCode != 200) {
-        throw Exception('Start failed (${res.statusCode})');
-      }
-    } catch (_) {}
+    await _api.start(_currentMap);
     _fetchStatus();
   }
 
   Future<void> _handlePause() async {
-    try {
-      final res = await http.post(Uri.parse(_pauseUrl));
-      if (res.statusCode != 200) throw Exception('Pause failed');
-    } catch (_) {}
+    await _api.pause();
     _fetchStatus();
   }
 
   Future<void> _handleSend() async {
     final msg = _commandController.text.trim();
-    if (msg.isEmpty) return;
-    try {
-      final url = '$_inputSequenceUrl/${Uri.encodeComponent(msg)}';
-      final res = await http.post(Uri.parse(url));
-      if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
-    } catch (_) {}
+    await _api.sendInputSequence(msg);
   }
 
-  Future<void> _handle_convert() async {
-    try {
-      final res = await http.post(Uri.parse(_convertUrl));
-      if (res.statusCode != 200) throw Exception('HTTP ${res.statusCode}');
-    } catch (_) {}
+  Future<void> _handleConvert() async {
+    await _api.convertMode();
   }
 
-  Future<void> _callSimplePost(String path) async {
-    try {
-      final url = '${widget.basePath}$path';
-      await http.post(Uri.parse(url));
-    } catch (_) {}
+  void _onHourChanged(int newVal) {
+    final old = _startHour;
+    if (newVal == old) return;
+
+    final forward = (newVal - old + 24) % 24;
+    final backward = (old - newVal + 24) % 24;
+    final delta = forward <= backward ? forward : -backward;
+
+    setState(() => _startHour = newVal);
+    _api.sendStartTimeDelta(delta, 0);
   }
 
-  Future<void> _callLogin(String id, String pw) async {
-    try {
-      _callSimplePost('weeing/login?id=$id&pw=$pw');
-    } catch (_) {}
+  void _onMinuteChanged(int newVal) {
+    final old = _startMinute;
+    if (newVal == old) return;
+
+    final forward = (newVal - old + 60) % 60;
+    final backward = (old - newVal + 60) % 60;
+    final delta = forward <= backward ? forward : -backward;
+
+    setState(() => _startMinute = newVal);
+    _api.sendStartTimeDelta(0, delta);
   }
+
+  // =========================================================
+  // 스트리밍 영역 터치 → 마우스 이동
+  // =========================================================
+
+  Offset _transformTouchToStreamCoord(
+    double touchX,
+    double touchY,
+    double viewWidth,
+    double viewHeight,
+  ) {
+    final centerX = viewWidth / 2;
+    final centerY = viewHeight / 2;
+
+    final streamX =
+        (touchX - centerX - _streamOffset.dx) / _streamScale + centerX;
+    final streamY =
+        (touchY - centerY - _streamOffset.dy) / _streamScale + centerY;
+
+    return Offset(streamX, streamY);
+  }
+
+  Widget _buildTouchableStreamView() {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final viewWidth = constraints.maxWidth;
+        final viewHeight = viewWidth * 9 / 16;
+
+        return GestureDetector(
+          onTapDown: (details) {
+            final transformed = _transformTouchToStreamCoord(
+              details.localPosition.dx,
+              details.localPosition.dy,
+              viewWidth,
+              viewHeight,
+            );
+            _api.sendMouseMoveTo(
+                transformed.dx, transformed.dy, viewWidth, viewHeight);
+          },
+          onDoubleTap: () {},
+          onLongPressStart: (details) {
+            final transformed = _transformTouchToStreamCoord(
+              details.localPosition.dx,
+              details.localPosition.dy,
+              viewWidth,
+              viewHeight,
+            );
+            _api.sendMouseClickAt(
+                transformed.dx, transformed.dy, viewWidth, viewHeight, 'right');
+          },
+          child: LobbyWebRTCView(
+            renderer: _renderer,
+            connected: _webrtcConnected,
+            scale: _streamScale,
+            offset: _streamOffset,
+          ),
+        );
+      },
+    );
+  }
+
+  // =========================================================
+  // Info Sheet & Login Dialog
+  // =========================================================
 
   void _showLoginDialog() async {
     final idController = TextEditingController();
     final pwController = TextEditingController();
-    
-    // 매크로 계정 목록 불러오기
-    List<Map<String, dynamic>> macros = [];
-    try {
-      final res = await http.get(Uri.parse('${widget.basePath}weeing/macros'));
-      if (res.statusCode == 200) {
-        final payload = jsonDecode(res.body);
-        final data = payload['data'] as List?;
-        if (data != null) {
-          macros = data.map((e) => Map<String, dynamic>.from(e)).toList();
-        }
-      }
-    } catch (_) {}
+
+    List<Map<String, dynamic>> macros = await _api.fetchMacros();
 
     if (!mounted) return;
 
@@ -507,16 +496,12 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // 매크로 선택 드롭다운
                 if (macros.isNotEmpty) ...[
                   const Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
                       '빠른 선택',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey,
-                      ),
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -567,7 +552,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                 final pw = pwController.text.trim();
                 if (id.isNotEmpty && pw.isNotEmpty) {
                   Navigator.of(ctx).pop();
-                  _callLogin(id, pw);
+                  _api.login(id, pw);
                 }
               },
               child: const Text('로그인'),
@@ -589,7 +574,8 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       builder: (ctx) {
         return SafeArea(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
             child: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -620,7 +606,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                     subtitle: const Text('부스터 아이템 사용'),
                     onTap: () {
                       Navigator.of(ctx).pop();
-                      _callSimplePost('weeing/booster');
+                      _api.callSimplePost('weeing/booster');
                     },
                   ),
                   ListTile(
@@ -629,7 +615,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                     subtitle: const Text('현재 계정에서 로그아웃'),
                     onTap: () {
                       Navigator.of(ctx).pop();
-                      _callSimplePost('weeing/logout');
+                      _api.callSimplePost('weeing/logout');
                     },
                   ),
                   ListTile(
@@ -647,7 +633,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                     subtitle: const Text('Weeing 프로세스 종료'),
                     onTap: () {
                       Navigator.of(ctx).pop();
-                      _callSimplePost('weeing/exit');
+                      _api.callSimplePost('weeing/exit');
                     },
                   ),
                   ListTile(
@@ -656,7 +642,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                     subtitle: const Text('마빌로 이동'),
                     onTap: () {
                       Navigator.of(ctx).pop();
-                      _callSimplePost('weeing/gomyster');
+                      _api.callSimplePost('weeing/gomyster');
                     },
                   ),
                   ListTile(
@@ -665,159 +651,13 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                     subtitle: const Text('마빌에서 나가기'),
                     onTap: () {
                       Navigator.of(ctx).pop();
-                      _callSimplePost('weeing/exitmyster');
+                      _api.callSimplePost('weeing/exitmyster');
                     },
-                  ),
-                  const SizedBox(height: 8),
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      '※ 나중에 여기 ListTile을 복사해서\n 원하는 엔드포인트로 onTap만 바꾸면 됨.',
-                      style: TextStyle(fontSize: 11, color: Colors.black45),
-                    ),
                   ),
                   const SizedBox(height: 4),
                 ],
               ),
             ),
-          ),
-        );
-      },
-    );
-  }
-
-  // ===== Mouse APIs =====
-  // Delegated to MouseMode widget
-
-  // =========================================================
-  // StartTime 휠 → delta 계산
-  // =========================================================
-
-  void _onHourChanged(int newVal) {
-    final old = _startHour;
-    if (newVal == old) return;
-
-    final forward = (newVal - old + 24) % 24;
-    final backward = (old - newVal + 24) % 24;
-    final delta = forward <= backward ? forward : -backward;
-
-    setState(() => _startHour = newVal);
-    _sendStartTimeDelta(delta, 0);
-  }
-
-  void _onMinuteChanged(int newVal) {
-    final old = _startMinute;
-    if (newVal == old) return;
-
-    final forward = (newVal - old + 60) % 60;
-    final backward = (old - newVal + 60) % 60;
-    final delta = forward <= backward ? forward : -backward;
-
-    setState(() => _startMinute = newVal);
-    _sendStartTimeDelta(0, delta);
-  }
-
-  // =========================================================
-  // 스트리밍 영역 터치 → 마우스 이동
-  // =========================================================
-
-  String get _mouseMoveToUrl => '${widget.basePath}mouse/MouseMoveTo';
-  String get _mouseClickAtUrl => '${widget.basePath}mouse/MouseClickAt';
-
-  /// 확대/이동을 고려하여 터치 좌표를 원본 스트림 좌표로 변환
-  /// 
-  /// 스트림 뷰는 중심 기준으로 확대되고 offset만큼 이동됨
-  /// Transform: translate(offset) -> scale(scale, center)
-  /// 역변환: (touchPos - viewCenter - offset) / scale + viewCenter
-  Offset _transformTouchToStreamCoord(
-    double touchX,
-    double touchY,
-    double viewWidth,
-    double viewHeight,
-  ) {
-    // 뷰의 중심점
-    final centerX = viewWidth / 2;
-    final centerY = viewHeight / 2;
-
-    // 1. offset 보정 (이동된 만큼 역으로)
-    // 2. scale 보정 (확대된 만큼 역으로, 중심 기준)
-    // 
-    // 원본 좌표 = (터치좌표 - 중심 - offset) / scale + 중심
-    final streamX = (touchX - centerX - _streamOffset.dx) / _streamScale + centerX;
-    final streamY = (touchY - centerY - _streamOffset.dy) / _streamScale + centerY;
-
-    return Offset(streamX, streamY);
-  }
-
-  Future<void> _sendMouseMoveTo(double touchX, double touchY, double viewWidth, double viewHeight) async {
-    try {
-      final uri = Uri.parse(_mouseMoveToUrl).replace(queryParameters: {
-        'touch_x': touchX.toString(),
-        'touch_y': touchY.toString(),
-        'view_width': viewWidth.toString(),
-        'view_height': viewHeight.toString(),
-      });
-      await http.post(uri);
-    } catch (e) {
-      debugPrint('MouseMoveTo error: $e');
-    }
-  }
-
-  Future<void> _sendMouseClickAt(double touchX, double touchY, double viewWidth, double viewHeight, String button) async {
-    try {
-      final uri = Uri.parse(_mouseClickAtUrl).replace(queryParameters: {
-        'touch_x': touchX.toString(),
-        'touch_y': touchY.toString(),
-        'view_width': viewWidth.toString(),
-        'view_height': viewHeight.toString(),
-        'button': button,
-      });
-      await http.post(uri);
-    } catch (e) {
-      debugPrint('MouseClickAt error: $e');
-    }
-  }
-
-  /// 마우스 모드에서 스트리밍 영역을 터치하면 해당 좌표로 마우스 이동
-  Widget _buildTouchableStreamView() {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // 16:9 비율로 높이 계산
-        final viewWidth = constraints.maxWidth;
-        final viewHeight = viewWidth * 9 / 16;
-
-        return GestureDetector(
-          onTapDown: (details) {
-            // 터치 좌표를 확대/이동 보정하여 원본 스트림 좌표로 변환
-            final transformed = _transformTouchToStreamCoord(
-              details.localPosition.dx,
-              details.localPosition.dy,
-              viewWidth,
-              viewHeight,
-            );
-            
-            // 서버로 변환된 좌표 전송 → 마우스 이동
-            _sendMouseMoveTo(transformed.dx, transformed.dy, viewWidth, viewHeight);
-          },
-          onDoubleTap: () {
-            // 더블탭은 기존 위치에서 더블클릭 (MouseMode 위젯에서 처리)
-          },
-          onLongPressStart: (details) {
-            // 터치 좌표를 확대/이동 보정
-            final transformed = _transformTouchToStreamCoord(
-              details.localPosition.dx,
-              details.localPosition.dy,
-              viewWidth,
-              viewHeight,
-            );
-            // 길게 누르면 해당 위치로 이동 후 우클릭
-            _sendMouseClickAt(transformed.dx, transformed.dy, viewWidth, viewHeight, 'right');
-          },
-          child: LobbyWebRTCView(
-            renderer: _renderer,
-            connected: _webrtcConnected,
-            scale: _streamScale,
-            offset: _streamOffset,
           ),
         );
       },
@@ -848,7 +688,6 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                     onInfoTap: _openInfoSheet,
                   ),
                   const SizedBox(height: 8),
-                  // 마우스 모드일 때 스트리밍 영역 터치 가능
                   _trackpadMode
                       ? _buildTouchableStreamView()
                       : LobbyWebRTCView(
@@ -873,7 +712,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                         controller: _cycleCtrl,
                         onChanged: (v) {
                           setState(() => _cycle = v);
-                          _setCycleOnServer(v);
+                          _api.setCycle(v);
                         },
                       ),
                       startTime: StartTimeControl(
@@ -896,7 +735,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                       onOffsetChanged: (o) => setState(() => _streamOffset = o),
                       commandController: _commandController,
                       onSend: _handleSend,
-                      onConvertMode: _handle_convert,
+                      onConvertMode: _handleConvert,
                     ),
                   const SizedBox(height: 24),
                   Align(
@@ -905,25 +744,30 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                       onTap: () {
                         setState(() {
                           _trackpadMode = !_trackpadMode;
-                          // 마우스 모드 진입/해제 시 확대 및 이동 초기화
                           _streamScale = 1.0;
                           _streamOffset = Offset.zero;
                         });
 
-                        // 트랙패드 모드에서 돌아올 때 휠 위치 복구
                         if (!_trackpadMode) {
-                          _initialStatusFetched = false; // 다음 fetchStatus에서 다시 맞추도록 허용
+                          _initialStatusFetched = false;
                           WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (_cycleCtrl.hasClients) _cycleCtrl.jumpToItem(_cycle);
-                            if (_hourCtrl.hasClients) _hourCtrl.jumpToItem(_startHour);
-                            if (_minCtrl.hasClients) _minCtrl.jumpToItem(_startMinute);
+                            if (_cycleCtrl.hasClients) {
+                              _cycleCtrl.jumpToItem(_cycle);
+                            }
+                            if (_hourCtrl.hasClients) {
+                              _hourCtrl.jumpToItem(_startHour);
+                            }
+                            if (_minCtrl.hasClients) {
+                              _minCtrl.jumpToItem(_startMinute);
+                            }
                           });
                         }
                       },
                       child: Container(
                         padding: const EdgeInsets.all(14),
                         decoration: BoxDecoration(
-                          color: _trackpadMode ? Colors.blueAccent : Colors.pinkAccent,
+                          color:
+                              _trackpadMode ? Colors.blueAccent : Colors.pinkAccent,
                           shape: BoxShape.circle,
                         ),
                         child: const Icon(

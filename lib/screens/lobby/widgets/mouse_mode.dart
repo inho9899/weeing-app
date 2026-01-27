@@ -1,15 +1,13 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
+/// 마우스 트랙패드 모드 위젯
 class MouseMode extends StatefulWidget {
   final String basePath;
   final Function(double) onScaleChanged;
   final Function(Offset) onOffsetChanged;
   final double initialScale;
   final Offset initialOffset;
-  // 스트리밍 영역 터치 콜백 (외부에서 사용할 경우)
-  final Function(double touchX, double touchY, double viewWidth, double viewHeight)? onStreamTap;
   final TextEditingController commandController;
   final VoidCallback onSend;
   final VoidCallback onConvertMode;
@@ -21,7 +19,6 @@ class MouseMode extends StatefulWidget {
     required this.onOffsetChanged,
     this.initialScale = 1.0,
     this.initialOffset = Offset.zero,
-    this.onStreamTap,
     required this.commandController,
     required this.onSend,
     required this.onConvertMode,
@@ -41,8 +38,6 @@ class _MouseModeState extends State<MouseMode> {
 
   String get _mouseMoveUrl => '${widget.basePath}mouse/MouseMove';
   String get _mouseClickUrl => '${widget.basePath}mouse/MouseClick';
-  String get _mouseMoveToUrl => '${widget.basePath}mouse/MouseMoveTo';
-  String get _mouseClickAtUrl => '${widget.basePath}mouse/MouseClickAt';
 
   Future<void> _sendMouseMove(int dx, int dy) async {
     try {
@@ -59,37 +54,6 @@ class _MouseModeState extends State<MouseMode> {
       await http.post(Uri.parse(url));
     } catch (e) {
       debugPrint('MouseMode click error: $e');
-    }
-  }
-
-  /// 스트리밍 영역 터치 시 절대 좌표로 마우스 이동
-  Future<void> _sendMouseMoveTo(double touchX, double touchY, double viewWidth, double viewHeight) async {
-    try {
-      final uri = Uri.parse(_mouseMoveToUrl).replace(queryParameters: {
-        'touch_x': touchX.toString(),
-        'touch_y': touchY.toString(),
-        'view_width': viewWidth.toString(),
-        'view_height': viewHeight.toString(),
-      });
-      await http.post(uri);
-    } catch (e) {
-      debugPrint('MouseMode moveTo error: $e');
-    }
-  }
-
-  /// 스트리밍 영역 터치 시 해당 좌표로 이동 후 클릭
-  Future<void> _sendMouseClickAt(double touchX, double touchY, double viewWidth, double viewHeight, String button) async {
-    try {
-      final uri = Uri.parse(_mouseClickAtUrl).replace(queryParameters: {
-        'touch_x': touchX.toString(),
-        'touch_y': touchY.toString(),
-        'view_width': viewWidth.toString(),
-        'view_height': viewHeight.toString(),
-        'button': button,
-      });
-      await http.post(uri);
-    } catch (e) {
-      debugPrint('MouseMode clickAt error: $e');
     }
   }
 
@@ -122,7 +86,6 @@ class _MouseModeState extends State<MouseMode> {
               behavior: HitTestBehavior.opaque,
               onTap: () => _sendMouseClick('left'),
               onDoubleTap: () async {
-                // 더블클릭: 좌클릭 두 번
                 await _sendMouseClick('left');
                 await _sendMouseClick('left');
               },
@@ -153,7 +116,6 @@ class _MouseModeState extends State<MouseMode> {
                   final newScale = (_baseScale * details.scale).clamp(1.0, 5.0);
                   widget.onScaleChanged(newScale);
 
-                  // Pan: Use the current offset from the widget and add the per-update delta
                   final newOffset = widget.initialOffset + details.focalPointDelta;
                   widget.onOffsetChanged(newOffset);
                 }

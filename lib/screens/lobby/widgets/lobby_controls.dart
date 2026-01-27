@@ -8,7 +8,6 @@ class LobbyControls extends StatelessWidget {
   final VoidCallback onPause;
   final Widget cycle;
   final Widget startTime;
-
   final bool holdStartTime;
   final ValueChanged<bool> onHoldToggle;
 
@@ -21,7 +20,6 @@ class LobbyControls extends StatelessWidget {
     required this.onPause,
     required this.cycle,
     required this.startTime,
-
     required this.holdStartTime,
     required this.onHoldToggle,
   });
@@ -114,7 +112,6 @@ class LobbyControls extends StatelessWidget {
             ),
           ],
         ),
-
       ],
     );
   }
