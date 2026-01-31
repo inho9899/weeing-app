@@ -39,8 +39,8 @@ class LobbyApiService {
   String get _mouseMoveToUrl => '${basePath}mouse/MouseMoveTo';
   String get _mouseClickAtUrl => '${basePath}mouse/MouseClickAt';
 
-  String startUrl(String mapName) =>
-      '${basePath}weeing/start/${Uri.encodeComponent(mapName)}';
+  String startUrl(String mapName, int startHour, int startMinute) =>
+      '${basePath}weeing/start/${Uri.encodeComponent(mapName)}/$startHour/$startMinute';
 
   // =========================================================
   // Build List
@@ -117,10 +117,10 @@ class LobbyApiService {
   // Start / Pause / Resume
   // =========================================================
 
-  Future<bool> start(String mapName) async {
+  Future<bool> start(String mapName, int startHour, int startMinute) async {
     if (mapName.isEmpty) return false;
     try {
-      final res = await http.post(Uri.parse(startUrl(mapName)));
+      final res = await http.post(Uri.parse(startUrl(mapName, startHour, startMinute)));
       if (res.statusCode == 409) {
         final resumeRes = await http.post(Uri.parse(_resumeUrl));
         return resumeRes.statusCode == 200;

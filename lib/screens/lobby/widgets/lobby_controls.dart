@@ -8,8 +8,6 @@ class LobbyControls extends StatelessWidget {
   final VoidCallback onPause;
   final Widget cycle;
   final Widget startTime;
-  final bool holdStartTime;
-  final ValueChanged<bool> onHoldToggle;
 
   const LobbyControls({
     super.key,
@@ -20,8 +18,6 @@ class LobbyControls extends StatelessWidget {
     required this.onPause,
     required this.cycle,
     required this.startTime,
-    required this.holdStartTime,
-    required this.onHoldToggle,
   });
 
   @override
@@ -73,43 +69,7 @@ class LobbyControls extends StatelessWidget {
           children: [
             Expanded(child: cycle),
             const SizedBox(width: 8),
-            Expanded(
-              child: Column(
-                children: [
-                  GestureDetector(
-                    onTap: () => onHoldToggle(!holdStartTime),
-                    child: Container(
-                      height: 32,
-                      decoration: BoxDecoration(
-                        color: holdStartTime ? Colors.orange : Colors.grey[400],
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Icon(
-                            holdStartTime ? Icons.lock_outline : Icons.lock_open,
-                            size: 14,
-                            color: Colors.white,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            holdStartTime ? 'HOLD ON' : 'HOLD OFF',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  startTime,
-                ],
-              ),
-            ),
+            Expanded(child: startTime),
           ],
         ),
       ],

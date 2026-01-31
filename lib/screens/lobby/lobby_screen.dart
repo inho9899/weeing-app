@@ -45,8 +45,8 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   String? _runningBuildFromStatus;
 
   final TextEditingController _commandController = TextEditingController();
-  Timer? _pollTimer;
-  bool _holdStartTime = false;
+  Timer? _pollTimer;      // cycle 폴링 (1초)
+  Timer? _timeSyncTimer;  // 시간 동기화 (1분)
   bool _initialStatusFetched = false;
 
   double _streamScale = 1.0;
@@ -77,8 +77,8 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     _api = LobbyApiService(basePath: widget.basePath);
 
     _cycleCtrl = FixedExtentScrollController();
-    _hourCtrl = FixedExtentScrollController();
-    _minCtrl = FixedExtentScrollController();
+    _hourCtrl = FixedExtentScrollController(initialItem: _startHour);
+    _minCtrl = FixedExtentScrollController(initialItem: _startMinute);
 
     _renderer.initialize().then((_) {
       _connectWebRTC();
@@ -87,11 +87,19 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
 
     _fetchBuildList();
-    _fetchStatus();
+    _fetchCycleAndBuild();
+    _syncTime();
 
+    // cycle 폴링: 1초마다
     _pollTimer = Timer.periodic(
       const Duration(seconds: 1),
-      (_) => _fetchStatus(),
+      (_) => _fetchCycleAndBuild(),
+    );
+
+    // 시간 동기화: 1분마다
+    _timeSyncTimer = Timer.periodic(
+      const Duration(minutes: 1),
+      (_) => _syncTime(),
     );
   }
 
@@ -99,8 +107,9 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.resumed) {
-      debugPrint('App resumed, reconnecting WebRTC...');
+      debugPrint('App resumed, reconnecting WebRTC and syncing time...');
       _reconnectWebRTC();
+      _syncTime();  // 화면 켤 때 시간 동기화
     }
   }
 
@@ -145,6 +154,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     _renderer.dispose();
 
     _pollTimer?.cancel();
+    _timeSyncTimer?.cancel();
     _commandController.dispose();
     _cycleCtrl.dispose();
     _hourCtrl.dispose();
@@ -315,33 +325,18 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     });
   }
 
-  Future<void> _fetchStatus() async {
+  /// cycle과 running_build만 폴링 (1초마다)
+  Future<void> _fetchCycleAndBuild() async {
     final parsed = await _api.fetchStatus();
     if (parsed == null) return;
 
     int? expCycle;
-    int? startH;
-    int? startM;
     String? runningBuild;
 
     if (parsed.containsKey('exp_cycle')) {
       final raw = (parsed['exp_cycle'] ?? '').trim();
       final n = int.tryParse(raw) ?? double.tryParse(raw)?.round();
       if (n != null) expCycle = n.clamp(0, 99).toInt();
-    }
-    if (parsed.containsKey('start_time')) {
-      final raw = parsed['start_time'] ?? '';
-      final parts = raw.split(':');
-      if (parts.length >= 2) {
-        final hRaw = parts[0].trim();
-        final mRaw = parts[1].trim();
-        final h = int.tryParse(hRaw) ?? double.tryParse(hRaw)?.round();
-        final m = int.tryParse(mRaw) ?? double.tryParse(mRaw)?.round();
-        if (h != null && m != null) {
-          startH = h.clamp(0, 23).toInt();
-          startM = m.clamp(0, 59).toInt();
-        }
-      }
     }
     if (parsed.containsKey('running_build')) {
       final rb = (parsed['running_build'] ?? '').trim();
@@ -352,35 +347,48 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
     setState(() {
       if (expCycle != null) _cycle = expCycle;
-      if (!_holdStartTime) {
-        if (startH != null) _startHour = startH;
-        if (startM != null) _startMinute = startM;
-      }
+      
       if (runningBuild != null) {
         _runningBuildFromStatus = runningBuild;
         if (_builds.contains(runningBuild)) {
           _currentMap = runningBuild;
         }
+      } else {
+        _runningBuildFromStatus = null;
       }
     });
 
     if (!_initialStatusFetched) {
       if (expCycle != null) _cycleCtrl.jumpToItem(_cycle);
-      if (startH != null) _hourCtrl.jumpToItem(_startHour);
-      if (startM != null) _minCtrl.jumpToItem(_startMinute);
       _initialStatusFetched = true;
+    }
+  }
+
+  /// 시간 동기화 (1분마다) - running thread가 없을 때만 현재 시간으로 업데이트
+  void _syncTime() {
+    // running thread가 없을 때만 현재 시간으로 업데이트
+    if (_runningBuildFromStatus == null) {
+      final now = DateTime.now();
+      setState(() {
+        _startHour = now.hour;
+        _startMinute = now.minute;
+      });
+      
+      // 휠 위치도 업데이트
+      if (_hourCtrl.hasClients) _hourCtrl.jumpToItem(_startHour);
+      if (_minCtrl.hasClients) _minCtrl.jumpToItem(_startMinute);
     }
   }
 
   Future<void> _handleStart() async {
     if (_currentMap.isEmpty) return;
-    await _api.start(_currentMap);
-    _fetchStatus();
+    await _api.start(_currentMap, _startHour, _startMinute);
+    _fetchCycleAndBuild();
   }
 
   Future<void> _handlePause() async {
     await _api.pause();
-    _fetchStatus();
+    _fetchCycleAndBuild();
   }
 
   Future<void> _handleSend() async {
@@ -393,27 +401,13 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   }
 
   void _onHourChanged(int newVal) {
-    final old = _startHour;
-    if (newVal == old) return;
-
-    final forward = (newVal - old + 24) % 24;
-    final backward = (old - newVal + 24) % 24;
-    final delta = forward <= backward ? forward : -backward;
-
+    if (newVal == _startHour) return;
     setState(() => _startHour = newVal);
-    _api.sendStartTimeDelta(delta, 0);
   }
 
   void _onMinuteChanged(int newVal) {
-    final old = _startMinute;
-    if (newVal == old) return;
-
-    final forward = (newVal - old + 60) % 60;
-    final backward = (old - newVal + 60) % 60;
-    final delta = forward <= backward ? forward : -backward;
-
+    if (newVal == _startMinute) return;
     setState(() => _startMinute = newVal);
-    _api.sendStartTimeDelta(0, delta);
   }
 
   // =========================================================
@@ -733,8 +727,6 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                         onHourChanged: _onHourChanged,
                         onMinuteChanged: _onMinuteChanged,
                       ),
-                      holdStartTime: _holdStartTime,
-                      onHoldToggle: (v) => setState(() => _holdStartTime = v),
                     )
                   else
                     MouseMode(
