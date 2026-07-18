@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,6 +8,7 @@ import 'package:weeing_app/gateway/gateway.dart';
 import 'models/device_info.dart';
 import 'widgets/device_row.dart';
 import 'widgets/add_ip_dialog.dart';
+import 'widgets/build_mapping_dialog.dart';
 
 const String backgroundTaskKey = 'device_status_check';
 
@@ -20,9 +22,9 @@ class ConfigScreen extends StatefulWidget {
 
 class _ConfigScreenState extends State<ConfigScreen> {
   final List<DeviceInfo> _devices = [];
+  Map<String, String> _buildMappings = {};
 
   Timer? _pollTimer;
-  bool _hasRedPushSent = false;
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
 
@@ -36,17 +38,21 @@ class _ConfigScreenState extends State<ConfigScreen> {
     super.initState();
     _initNotifications();
     _loadDevices();
+    _loadBuildMappings();
     _pollTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
       _refreshAllStatuses();
     });
   }
 
   Future<void> _initNotifications() async {
-    const androidSettings =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings = AndroidInitializationSettings(
+      '@mipmap/ic_launcher',
+    );
     const iosSettings = DarwinInitializationSettings();
-    const initSettings =
-        InitializationSettings(android: androidSettings, iOS: iosSettings);
+    const initSettings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
     await _localNotifications.initialize(initSettings);
   }
 
@@ -60,10 +66,50 @@ class _ConfigScreenState extends State<ConfigScreen> {
     _refreshAllStatuses();
   }
 
+  Future<void> _loadBuildMappings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('build_mapping');
+    if (raw == null || raw.isEmpty) return;
+
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final nextMappings = <String, String>{};
+        for (final entry in decoded.entries) {
+          final value = entry.value;
+          if (value is String) {
+            nextMappings[entry.key.toString()] = value;
+          } else if (value is Map) {
+            final build = value['build']?.toString();
+            if (build != null && build.isNotEmpty) {
+              nextMappings[entry.key.toString()] = build;
+            }
+          } else if (value != null) {
+            final build = value.toString();
+            if (build.isNotEmpty) {
+              nextMappings[entry.key.toString()] = build;
+            }
+          }
+        }
+        if (!mounted) return;
+        setState(() {
+          _buildMappings = nextMappings;
+        });
+      }
+    } catch (_) {}
+  }
+
   Future<void> _saveDevices() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setStringList(
-        'device_list', _devices.map((d) => d.ip).toList());
+      'device_list',
+      _devices.map((d) => d.ip).toList(),
+    );
+  }
+
+  Future<void> _saveBuildMappings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('build_mapping', jsonEncode(_buildMappings));
   }
 
   @override
@@ -78,21 +124,17 @@ class _ConfigScreenState extends State<ConfigScreen> {
     }
   }
 
-  void _checkAnyRedAndAlert() {
-    final hasRed = _devices.any((d) => d.enabled && d.color == Colors.red);
-    if (!hasRed) {
-      _hasRedPushSent = false;
-    }
-  }
-
   Future<void> _checkStatusForIndex(int index) async {
     if (index < 0 || index >= _devices.length) return;
 
     final device = _devices[index];
 
     try {
-      final response = await Gateway.call(device.ip, 'statusChecker/status/get', method: 'GET')
-          .timeout(const Duration(seconds: 2));
+      final response = await Gateway.call(
+        device.ip,
+        'statusChecker/status/get',
+        method: 'GET',
+      ).timeout(const Duration(seconds: 2));
 
       // 통일 봉투: 200 이면 resp 존재(=기기 응답 OK), 아니면 null(회색).
       final resp = Gateway.unwrap(response);
@@ -127,33 +169,18 @@ class _ConfigScreenState extends State<ConfigScreen> {
 
       setState(() {
         if (!isOk) {
-          _devices[index] = device.copyWith(
-            enabled: false,
-            color: Colors.grey,
-          );
+          _devices[index] = device.copyWith(enabled: false, color: Colors.grey);
         } else if (isRed) {
-          _devices[index] = device.copyWith(
-            enabled: true,
-            color: Colors.red,
-          );
+          _devices[index] = device.copyWith(enabled: true, color: Colors.red);
         } else {
-          _devices[index] = device.copyWith(
-            enabled: true,
-            color: Colors.green,
-          );
+          _devices[index] = device.copyWith(enabled: true, color: Colors.green);
         }
       });
-
-      _checkAnyRedAndAlert();
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _devices[index] = device.copyWith(
-          enabled: false,
-          color: Colors.grey,
-        );
+        _devices[index] = device.copyWith(enabled: false, color: Colors.grey);
       });
-      _checkAnyRedAndAlert();
     }
   }
 
@@ -176,6 +203,25 @@ class _ConfigScreenState extends State<ConfigScreen> {
         params: {'token': widget.fcmToken},
       ).timeout(const Duration(seconds: 5));
     } catch (_) {}
+  }
+
+  Future<void> _openBuildMappingScreen() async {
+    final result = await Navigator.of(context).push<Map<String, String>>(
+      MaterialPageRoute(
+        builder: (_) => BuildMappingDialog(
+          devices: List<DeviceInfo>.from(_devices),
+          initialMappings: _buildMappings,
+        ),
+      ),
+    );
+
+    if (result == null) return;
+
+    if (!mounted) return;
+    setState(() {
+      _buildMappings = result;
+    });
+    await _saveBuildMappings();
   }
 
   Future<void> _confirmDeleteDevice(int index) async {
@@ -213,6 +259,42 @@ class _ConfigScreenState extends State<ConfigScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        title: const Text(
+          '원격 기기',
+          style: TextStyle(fontWeight: FontWeight.w700),
+        ),
+        backgroundColor: Colors.white,
+        foregroundColor: const Color(0xFF1A1A1C),
+        elevation: 0,
+        scrolledUnderElevation: 0.5,
+        centerTitle: false,
+        actions: [
+          Padding(
+            padding: const EdgeInsets.only(right: 12.0),
+            child: FilledButton.icon(
+              onPressed: _openBuildMappingScreen,
+              icon: const Icon(Icons.tune, size: 18),
+              label: const Text('빌드 매핑'),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF3B82F6),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(20),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
       backgroundColor: const Color(0xFFF3F3F5),
       body: SafeArea(
         child: Padding(
@@ -220,15 +302,6 @@ class _ConfigScreenState extends State<ConfigScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                '원격 기기',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 16),
-
               // 카드 영역
               Container(
                 decoration: BoxDecoration(
@@ -268,26 +341,25 @@ class _ConfigScreenState extends State<ConfigScreen> {
                       style: BorderStyle.solid,
                     ),
                   ),
-                  child: const Center(
-                    child: Icon(
-                      Icons.add,
-                      size: 32,
-                    ),
-                  ),
+                  child: const Center(child: Icon(Icons.add, size: 32)),
                 ),
               ),
               const SizedBox(height: 32),
               const Divider(),
               const SizedBox(height: 16),
-              const Text('FCM 토큰:',
-                  style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text(
+                'FCM 토큰:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
               const SelectableText('', style: TextStyle(fontSize: 12)),
               const SizedBox(height: 16),
               const Divider(),
               const Align(
                 alignment: Alignment.centerLeft,
-                child: Text('FCM 수신 로그:',
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                child: Text(
+                  'FCM 수신 로그:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
               ),
               const SizedBox(height: 8),
               const Expanded(
