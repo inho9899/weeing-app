@@ -26,11 +26,10 @@ class DeviceRow extends StatelessWidget {
     return InkWell(
       onTap: enabled
           ? () {
-              final basePath = 'http://$ip/';
-              debugPrint('[DeviceRow] Navigate to LobbyScreen with basePath: $basePath');
+              debugPrint('[DeviceRow] Navigate to LobbyScreen with ip: $ip');
               Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => LobbyScreen(basePath: basePath),
+                  builder: (_) => LobbyScreen(ip: ip),
                 ),
               );
             }

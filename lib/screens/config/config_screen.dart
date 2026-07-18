@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-import 'package:weeing_app/utils/background_task.dart';
+import 'package:weeing_app/gateway/gateway.dart';
 import 'models/device_info.dart';
 import 'widgets/device_row.dart';
 import 'widgets/add_ip_dialog.dart';
@@ -91,46 +89,39 @@ class _ConfigScreenState extends State<ConfigScreen> {
     if (index < 0 || index >= _devices.length) return;
 
     final device = _devices[index];
-    final host = device.ip.split(':')[0];
-    final uri = Uri.parse('http://$host:8001/status/');
 
     try {
-      final response = await http.get(uri).timeout(const Duration(seconds: 2));
+      final response = await Gateway.call(device.ip, 'statusChecker/status/get', method: 'GET')
+          .timeout(const Duration(seconds: 2));
 
-      bool isOk = false;
+      // 통일 봉투: 200 이면 resp 존재(=기기 응답 OK), 아니면 null(회색).
+      final resp = Gateway.unwrap(response);
+      bool isOk = resp != null;
       bool isRed = false;
 
-      try {
-        final decoded = jsonDecode(response.body);
-        final bodyStatus = decoded['status'];
-        isOk = bodyStatus == 200;
-
-        final data = decoded['data'];
-        if (data is String) {
-          final lower = data.toLowerCase();
-          double parseMetric(String key) {
-            final regex = RegExp('$key\\s*:\\s*([0-9.]+)');
-            final match = regex.firstMatch(lower);
-            if (match != null) {
-              return double.tryParse(match.group(1) ?? '') ?? 0.0;
+      if (resp != null) {
+        try {
+          // resp 가 Map({liecheck:0.1,..}) 이든 "k:v,k:v" 문자열이든 지원.
+          double metric(String key) {
+            if (resp is Map) {
+              final v = resp[key];
+              if (v is num) return v.toDouble();
+              return double.tryParse('${v ?? ''}') ?? 0.0;
             }
-            return 0.0;
+            final regex = RegExp('$key\\s*:\\s*([0-9.]+)');
+            final m = regex.firstMatch(resp.toString().toLowerCase());
+            return m != null ? (double.tryParse(m.group(1) ?? '') ?? 0.0) : 0.0;
           }
-
-          final liecheck = parseMetric('liecheck');
-          final viol = parseMetric('viol');
-          final shape = parseMetric('shape');
-          final exception = parseMetric('exception');
 
           const threshold = 0.8;
-          if (liecheck >= threshold ||
-              viol >= threshold ||
-              shape >= threshold ||
-              exception >= threshold) {
+          if (metric('liecheck') >= threshold ||
+              metric('viol') >= threshold ||
+              metric('shape') >= threshold ||
+              metric('exception') >= threshold) {
             isRed = true;
           }
-        }
-      } catch (_) {}
+        } catch (_) {}
+      }
 
       if (!mounted) return;
 
@@ -178,14 +169,12 @@ class _ConfigScreenState extends State<ConfigScreen> {
 
     // 디바이스에 FCM 등록 요청
     try {
-      final url = Uri.parse(
-          'http://$newIp/status/addFCM?token=${Uri.encodeComponent(widget.fcmToken)}');
-      await http
-          .post(
-            url,
-            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-          )
-          .timeout(const Duration(seconds: 5));
+      await Gateway.call(
+        newIp,
+        'subaction/status/addFCM',
+        method: 'POST',
+        params: {'token': widget.fcmToken},
+      ).timeout(const Duration(seconds: 5));
     } catch (_) {}
   }
 

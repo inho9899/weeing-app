@@ -1,81 +1,41 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'dart:convert';
 
-/// 마우스 위치 데이터 클래스
-class MousePosition {
-  final int x;
-  final int y;
-  final double normalizedX; // 스트리밍 영역 기준 0.0 ~ 1.0
-  final double normalizedY; // 스트리밍 영역 기준 0.0 ~ 1.0
+import 'package:weeing_app/gateway/gateway.dart';
 
-  MousePosition({
-    required this.x,
-    required this.y,
-    required this.normalizedX,
-    required this.normalizedY,
-  });
-}
-
-/// Lobby API 서비스 클래스
+/// Lobby API 서비스.
+///
+/// SoT 는 msaInstaller 의 gateway.py. 각 호출을 해당 MSA 서비스로 직행 라우팅한다.
+/// (모든 요청은 [Gateway] → cloudflare → 대상 머신(ip) 의 서비스로 전달)
 class LobbyApiService {
-  final String basePath;
+  /// 대상 머신 IP (예: "192.168.0.5")
+  final String ip;
 
-  LobbyApiService({required this.basePath});
+  LobbyApiService({required this.ip});
 
-  // =========================================================
-  // URL Getters
-  // =========================================================
-
-  String get _statusUrl => '${basePath}status/';
-  String get _buildListUrl => '${basePath}build/list';
-  String get _setCycleUrl => '${basePath}status/cycle/set';
-  String get _startTimeUrl => '${basePath}status/start_time';
-  String get _inputSequenceUrl => '${basePath}input/sequence';
-  String get _pauseUrl => '${basePath}weeing/pause';
-  String get _resumeUrl => '${basePath}weeing/resume';
-  String get _convertUrl => '${basePath}input/convert_mode';
-  String get _macrosUrl => '${basePath}weeing/macros';
-  String get _mouseMoveToUrl => '${basePath}mouse/MouseMoveTo';
-  String get _mouseClickAtUrl => '${basePath}mouse/MouseClickAt';
-
-  String startUrl(String mapName, int startHour, int startMinute) =>
-      '${basePath}weeing/start/${Uri.encodeComponent(mapName)}/$startHour/$startMinute';
-
-  // =========================================================
-  // Build List
-  // =========================================================
-
-  Future<List<String>> fetchBuildList() async {
-    try {
-      final res = await http.get(Uri.parse(_buildListUrl));
-      if (res.statusCode != 200) return [];
-      final payload = jsonDecode(res.body);
-      return (payload['data'] as List?)?.map((e) => e.toString()).toList() ??
-          [];
-    } catch (_) {
-      return [];
-    }
-  }
-
-  // =========================================================
-  // Status
-  // =========================================================
+  // ── statusChecker ──
 
   Future<Map<String, String>?> fetchStatus() async {
     try {
-      final res = await http.get(Uri.parse(_statusUrl));
-      if (res.statusCode != 200) return null;
-
-      final payload = jsonDecode(res.body);
-      final dataStr = payload['data'] as String?;
-      return _parseStatusData(dataStr);
+      final res = await Gateway.call(ip, 'statusChecker/status/get', method: 'GET');
+      final resp = Gateway.unwrap(res);
+      if (resp == null) return null;
+      return statusMapOf(resp);
     } catch (_) {
       return null;
     }
   }
 
-  Map<String, String> _parseStatusData(String? dataStr) {
+  /// 통일 봉투의 resp 를 상태 Map 으로 변환. Map 이든 "k:v,k:v" 문자열이든 지원.
+  static Map<String, String> statusMapOf(dynamic resp) {
+    if (resp is Map) {
+      return resp.map((k, v) => MapEntry(k.toString(), v.toString()));
+    }
+    if (resp is String) return _parseStatusData(resp);
+    return {};
+  }
+
+  static Map<String, String> _parseStatusData(String? dataStr) {
     final out = <String, String>{};
     if (dataStr == null) return out;
     for (final seg in dataStr.split(',')) {
@@ -89,40 +49,54 @@ class LobbyApiService {
     return out;
   }
 
-  // =========================================================
-  // Cycle / Start Time
-  // =========================================================
-
+  /// gateway.py set_exp_cycle → statusChecker /cycle/set?cycle=
   Future<void> setCycle(int value) async {
     try {
-      await http.post(
-        Uri.parse(_setCycleUrl),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(value),
-      );
+      await Gateway.call(ip, 'statusChecker/cycle/set',
+          method: 'POST', params: {'cycle': value});
     } catch (_) {}
   }
 
-  Future<void> sendStartTimeDelta(int hDelta, int mDelta) async {
+  // ── mainAction ──
+
+  Future<List<String>> fetchBuildList() async {
     try {
-      await http.post(
-        Uri.parse(_startTimeUrl),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'hour': hDelta, 'minute': mDelta}),
-      );
-    } catch (_) {}
+      final res = await Gateway.call(ip, 'mainAction/build/list', method: 'GET');
+      if (res.statusCode != 200) return [];
+
+      final dynamic body = jsonDecode(res.body);
+
+      if (body is List) {
+        return body.map((e) => e.toString()).toList();
+      }
+
+      if (body is Map) {
+        final resp = body['resp'];
+        if (resp is List) {
+          return resp.map((e) => e.toString()).toList();
+        }
+
+        final data = body['data'];
+        if (data is List) {
+          return data.map((e) => e.toString()).toList();
+        }
+      }
+
+      return [];
+    } catch (_) {
+      return [];
+    }
   }
 
-  // =========================================================
-  // Start / Pause / Resume
-  // =========================================================
-
+  /// 시작. 이미 실행 중(409)이면 재개(intrAction/continue = gateway.py continue_main).
   Future<bool> start(String mapName, int startHour, int startMinute) async {
     if (mapName.isEmpty) return false;
     try {
-      final res = await http.post(Uri.parse(startUrl(mapName, startHour, startMinute)));
+      final api =
+          'mainAction/weeing/start/${Uri.encodeComponent(mapName)}/$startHour/$startMinute';
+      final res = await Gateway.call(ip, api, method: 'POST');
       if (res.statusCode == 409) {
-        final resumeRes = await http.post(Uri.parse(_resumeUrl));
+        final resumeRes = await Gateway.call(ip, 'intrAction/continue', method: 'POST');
         return resumeRes.statusCode == 200;
       }
       return res.statusCode == 200;
@@ -133,22 +107,33 @@ class LobbyApiService {
 
   Future<bool> pause() async {
     try {
-      final res = await http.post(Uri.parse(_pauseUrl));
+      final res = await Gateway.call(ip, 'mainAction/weeing/pause', method: 'POST');
       return res.statusCode == 200;
     } catch (_) {
       return false;
     }
   }
 
-  // =========================================================
-  // Input
-  // =========================================================
+  /// 현재 실행 중인 빌드명. gateway.py get_running_build → mainAction /weeing/running_build.
+  /// 실행 중이 아니면(resp == -1) null.
+  Future<String?> fetchRunningBuild() async {
+    try {
+      final res = await Gateway.call(ip, 'mainAction/weeing/running_build', method: 'GET');
+      final resp = Gateway.unwrap(res);
+      if (resp is String && resp.isNotEmpty && resp != 'None') return resp;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ── subAction ──
 
   Future<bool> sendInputSequence(String msg) async {
     if (msg.isEmpty) return false;
     try {
-      final url = '$_inputSequenceUrl/${Uri.encodeComponent(msg)}';
-      final res = await http.post(Uri.parse(url));
+      final api = 'subaction/input/sequence/${Uri.encodeComponent(msg)}';
+      final res = await Gateway.call(ip, api, method: 'POST');
       return res.statusCode == 200;
     } catch (_) {
       return false;
@@ -157,126 +142,57 @@ class LobbyApiService {
 
   Future<bool> convertMode() async {
     try {
-      final res = await http.post(Uri.parse(_convertUrl));
+      final res = await Gateway.call(ip, 'subaction/input/convert_mode', method: 'POST');
       return res.statusCode == 200;
     } catch (_) {
       return false;
     }
   }
 
-  // =========================================================
-  // Simple POST
-  // =========================================================
-
-  Future<void> callSimplePost(String path) async {
-    try {
-      await http.post(Uri.parse('$basePath$path'));
-    } catch (_) {}
-  }
-
-  Future<void> login(String id, String pw) async {
-    await callSimplePost('weeing/login?id=$id&pw=$pw');
-  }
-
-  // =========================================================
-  // Macros
-  // =========================================================
-
   Future<List<Map<String, dynamic>>> fetchMacros() async {
     try {
-      final res = await http.get(Uri.parse(_macrosUrl));
-      if (res.statusCode == 200) {
-        final payload = jsonDecode(res.body);
-        final data = payload['data'] as List?;
-        if (data != null) {
-          return data.map((e) => Map<String, dynamic>.from(e)).toList();
-        }
+      final res = await Gateway.call(ip, 'subaction/weeing/macros', method: 'GET');
+      final resp = Gateway.unwrap(res);
+      if (resp is List) {
+        return resp.map((e) => Map<String, dynamic>.from(e)).toList();
       }
     } catch (_) {}
     return [];
   }
 
-  // =========================================================
-  // Mouse API
-  // =========================================================
-
-  String get _mousePositionUrl => '${basePath}mouse/position';
-  String get _mouseMoveUrl => '${basePath}mouse/MouseMove';
-
-  /// 현재 마우스 위치 가져오기 (정규화 좌표 포함)
-  Future<MousePosition?> getMousePosition() async {
+  Future<void> login(String id, String pw) async {
     try {
-      final res = await http.get(Uri.parse(_mousePositionUrl));
-      if (res.statusCode != 200) return null;
-      final data = jsonDecode(res.body);
-      return MousePosition(
-        x: data['x'] ?? 0,
-        y: data['y'] ?? 0,
-        normalizedX: (data['normalized_x'] ?? 0.5).toDouble(),
-        normalizedY: (data['normalized_y'] ?? 0.5).toDouble(),
-      );
+      await Gateway.call(ip, 'subaction/weeing/login',
+          method: 'POST', params: {'id': id, 'pw': pw});
+    } catch (_) {}
+  }
+
+  Future<void> logout() async {
+    try {
+      await Gateway.call(ip, 'subaction/weeing/logout', method: 'POST');
+    } catch (_) {}
+  }
+
+  // ── inputHandler (마우스) ──
+
+  /// 영상 절대좌표 이동. gateway.py mouse_move → inputHandler /mouse/move?x=&y=
+  Future<void> mouseMove(int x, int y) async {
+    try {
+      await Gateway.call(ip, 'inputHandler/mouse/move',
+          method: 'POST', params: {'x': x, 'y': y});
     } catch (e) {
-      debugPrint('getMousePosition error: $e');
-      return null;
+      debugPrint('mouseMove error: $e');
     }
   }
 
-  /// 마우스 상대 이동 (dx, dy) + 새 위치 반환
-  Future<MousePosition?> sendMouseMove(int dx, int dy) async {
+  /// 영상 절대좌표 클릭. gateway.py mouse_click → inputHandler /mouse/click?click_mode=&delay=&x=&y=
+  Future<void> mouseClickAt(String button, int x, int y) async {
     try {
-      final url = '$_mouseMoveUrl/$dx/$dy';
-      final res = await http.post(Uri.parse(url));
-      if (res.statusCode != 200) return null;
-      final data = jsonDecode(res.body);
-      return MousePosition(
-        x: data['x'] ?? 0,
-        y: data['y'] ?? 0,
-        normalizedX: (data['normalized_x'] ?? 0.5).toDouble(),
-        normalizedY: (data['normalized_y'] ?? 0.5).toDouble(),
-      );
+      await Gateway.call(ip, 'inputHandler/mouse/click',
+          method: 'POST',
+          params: {'click_mode': button, 'delay': 0, 'x': x, 'y': y});
     } catch (e) {
-      debugPrint('sendMouseMove error: $e');
-      return null;
-    }
-  }
-
-  Future<void> sendMouseMoveTo(
-    double touchX,
-    double touchY,
-    double viewWidth,
-    double viewHeight,
-  ) async {
-    try {
-      final uri = Uri.parse(_mouseMoveToUrl).replace(queryParameters: {
-        'touch_x': touchX.toString(),
-        'touch_y': touchY.toString(),
-        'view_width': viewWidth.toString(),
-        'view_height': viewHeight.toString(),
-      });
-      await http.post(uri);
-    } catch (e) {
-      debugPrint('MouseMoveTo error: $e');
-    }
-  }
-
-  Future<void> sendMouseClickAt(
-    double touchX,
-    double touchY,
-    double viewWidth,
-    double viewHeight,
-    String button,
-  ) async {
-    try {
-      final uri = Uri.parse(_mouseClickAtUrl).replace(queryParameters: {
-        'touch_x': touchX.toString(),
-        'touch_y': touchY.toString(),
-        'view_width': viewWidth.toString(),
-        'view_height': viewHeight.toString(),
-        'button': button,
-      });
-      await http.post(uri);
-    } catch (e) {
-      debugPrint('MouseClickAt error: $e');
+      debugPrint('mouseClickAt error: $e');
     }
   }
 }

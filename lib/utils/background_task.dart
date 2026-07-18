@@ -1,13 +1,29 @@
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 import 'package:flutter/material.dart';
 
-Map<String, double> parseMetrics(String data) {
+import 'package:weeing_app/gateway/gateway.dart';
+
+/// 통일 봉투의 resp(Map 또는 "k:v,k:v" 문자열) → 메트릭 Map.
+Map<String, double> parseMetrics(dynamic data) {
   final metrics = <String, double>{};
+  const keys = ['liecheck', 'viol', 'shape', 'exception'];
+
+  if (data is Map) {
+    for (final key in keys) {
+      final v = data[key];
+      if (v is num) {
+        metrics[key] = v.toDouble();
+      } else if (v != null) {
+        final p = double.tryParse('$v');
+        if (p != null) metrics[key] = p;
+      }
+    }
+    return metrics;
+  }
+
   final regex = RegExp(r'(liecheck|viol|shape|exception):\s*([0-9.]+)');
-  for (final match in regex.allMatches(data)) {
+  for (final match in regex.allMatches(data.toString())) {
     metrics[match.group(1)!] = double.tryParse(match.group(2)!) ?? 0.0;
   }
   return metrics;
@@ -25,15 +41,14 @@ Future<void> runBackgroundDeviceCheck() async {
 
   for (final ip in deviceList) {
     try {
-      final response = await http.get(Uri.parse('http://$ip/status/')).timeout(const Duration(seconds: 5));
-      if (response.statusCode == 200) {
-        final jsonResp = json.decode(response.body);
-        if (jsonResp['status'] == 200 && jsonResp['data'] is String) {
-          final metrics = parseMetrics(jsonResp['data']);
-          if (isRedStatus(metrics)) {
-            hasRed = true;
-            break;
-          }
+      final response = await Gateway.call(ip, 'statusChecker/status/get', method: 'GET')
+          .timeout(const Duration(seconds: 5));
+      final resp = Gateway.unwrap(response); // 200 아니면 null
+      if (resp != null) {
+        final metrics = parseMetrics(resp);
+        if (isRedStatus(metrics)) {
+          hasRed = true;
+          break;
         }
       }
     } catch (e) {

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'package:weeing_app/gateway/gateway.dart';
+
 /// WebRTC 연결 상태
 enum WebRTCState {
   disconnected,
@@ -13,7 +15,8 @@ enum WebRTCState {
 
 /// WebRTC 시그널링 및 연결 관리 서비스
 class WebRTCService {
-  final String basePath;
+  /// 대상 머신 IP
+  final String ip;
   final RTCVideoRenderer renderer;
   final Function(WebRTCState) onStateChanged;
 
@@ -26,15 +29,13 @@ class WebRTCService {
   bool _disposed = false;
 
   WebRTCService({
-    required this.basePath,
+    required this.ip,
     required this.renderer,
     required this.onStateChanged,
   });
 
-  String get _signalingUrl {
-    final host = Uri.parse(basePath).host;
-    return 'ws://$host:8765/ws';
-  }
+  // 스트리밍 시그널링도 cloudflare 를 경유한다.
+  Uri get _signalingUri => Gateway.signalingUri(ip);
 
   Future<void> initialize() async {
     await renderer.initialize();
@@ -48,7 +49,7 @@ class WebRTCService {
     _signalingChannel?.sink.close();
 
     try {
-      _signalingChannel = WebSocketChannel.connect(Uri.parse(_signalingUrl));
+      _signalingChannel = WebSocketChannel.connect(_signalingUri);
       _signalingSubscription = _signalingChannel!.stream.listen(
         _onSignalingMessage,
         onDone: _scheduleRetry,

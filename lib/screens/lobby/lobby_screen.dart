@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'package:weeing_app/gateway/gateway.dart';
 import 'widgets/lobby_header.dart';
 import 'widgets/lobby_webrtc_view.dart';
 import 'widgets/lobby_controls.dart';
@@ -14,8 +14,9 @@ import 'widgets/mouse_mode.dart';
 import 'services/lobby_api_service.dart';
 
 class LobbyScreen extends StatefulWidget {
-  final String basePath;
-  const LobbyScreen({super.key, required this.basePath});
+  /// 대상 머신 IP (예: "192.168.0.5" 또는 "192.168.0.5:8000")
+  final String ip;
+  const LobbyScreen({super.key, required this.ip});
 
   @override
   State<LobbyScreen> createState() => _LobbyScreenState();
@@ -61,20 +62,12 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   // ===== Trackpad mode =====
   bool _trackpadMode = false;
 
-  String get _hostText {
-    try {
-      final uri = Uri.parse(widget.basePath);
-      if (uri.host.isNotEmpty) return uri.host;
-      return widget.basePath;
-    } catch (_) {
-      return widget.basePath;
-    }
-  }
+  String get _hostText => widget.ip;
 
   @override
   void initState() {
     super.initState();
-    _api = LobbyApiService(basePath: widget.basePath);
+    _api = LobbyApiService(ip: widget.ip);
 
     _cycleCtrl = FixedExtentScrollController();
     _hourCtrl = FixedExtentScrollController(initialItem: _startHour);
@@ -166,8 +159,8 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   // WebRTC Signaling
   // =========================================================
 
-  String get _webrtcSignalingUrl =>
-      'ws://${Uri.parse(widget.basePath).host}:8765/ws';
+  // 스트리밍 시그널링도 cloudflare 를 경유한다.
+  Uri get _webrtcSignalingUri => Gateway.signalingUri(widget.ip);
 
   void _connectWebRTC() async {
     _signalingSubscription?.cancel();
@@ -175,7 +168,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
     try {
       _signalingChannel =
-          WebSocketChannel.connect(Uri.parse(_webrtcSignalingUrl));
+          WebSocketChannel.connect(_webrtcSignalingUri);
       _signalingSubscription = _signalingChannel!.stream.listen(
         (message) => _onSignalingMessage(message),
         onDone: () => _scheduleWebRTCRetry(),
@@ -325,25 +318,20 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     });
   }
 
-  /// cycle과 running_build만 폴링 (1초마다)
+  /// cycle(statusChecker) 과 running_build(mainAction) 폴링 (1초마다, 진입 시 1회 포함)
   Future<void> _fetchCycleAndBuild() async {
+    // cycle 은 statusChecker/status/get, running_build 는 mainAction/weeing/running_build
     final parsed = await _api.fetchStatus();
-    if (parsed == null) return;
+    final runningBuild = await _api.fetchRunningBuild();
 
     int? expCycle;
-    String? runningBuild;
-
-    if (parsed.containsKey('exp_cycle')) {
+    if (parsed != null && parsed.containsKey('exp_cycle')) {
       final raw = (parsed['exp_cycle'] ?? '').trim();
       final n = int.tryParse(raw) ?? double.tryParse(raw)?.round();
       if (n != null) expCycle = n.clamp(0, 99).toInt();
     }
-    if (parsed.containsKey('running_build')) {
-      final rb = (parsed['running_build'] ?? '').trim();
-      if (rb.isNotEmpty && rb != 'None') {
-        runningBuild = rb;
-      }
-    }
+
+    if (!mounted) return;
 
     setState(() {
       if (expCycle != null) _cycle = expCycle;
@@ -431,6 +419,30 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     return Offset(streamX, streamY);
   }
 
+  /// 스트림 좌표(뷰 기준) → 영상 원본 해상도의 절대 픽셀로 환산해 SoT 마우스 호출.
+  /// gateway.py mouse_move / mouse_click 은 절대좌표(x,y)를 받으므로 클라이언트에서 변환한다.
+  void _sendVideoMouse(
+    Offset streamPt,
+    double viewWidth,
+    double viewHeight, {
+    String? clickButton,
+  }) {
+    final sw = _renderer.value.width;
+    final sh = _renderer.value.height;
+    if (sw <= 0 || sh <= 0 || viewWidth <= 0 || viewHeight <= 0) return;
+
+    final nx = (streamPt.dx / viewWidth).clamp(0.0, 1.0);
+    final ny = (streamPt.dy / viewHeight).clamp(0.0, 1.0);
+    final x = (nx * sw).round();
+    final y = (ny * sh).round();
+
+    if (clickButton != null) {
+      _api.mouseClickAt(clickButton, x, y);
+    } else {
+      _api.mouseMove(x, y);
+    }
+  }
+
   Widget _buildTouchableStreamView() {
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -454,8 +466,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
               viewWidth,
               viewHeight,
             );
-            _api.sendMouseMoveTo(
-                transformed.dx, transformed.dy, viewWidth, viewHeight);
+            _sendVideoMouse(transformed, viewWidth, viewHeight);
           },
           onDoubleTap: () {},
           onLongPressStart: (details) {
@@ -465,8 +476,8 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
               viewWidth,
               viewHeight,
             );
-            _api.sendMouseClickAt(
-                transformed.dx, transformed.dy, viewWidth, viewHeight, 'right');
+            _sendVideoMouse(transformed, viewWidth, viewHeight,
+                clickButton: 'right');
           },
           child: LobbyWebRTCView(
             renderer: _renderer,
@@ -605,21 +616,12 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                   const SizedBox(height: 4),
                   const Divider(height: 1),
                   ListTile(
-                    leading: const Icon(Icons.bolt_outlined),
-                    title: const Text('부스터 적용'),
-                    subtitle: const Text('부스터 아이템 사용'),
-                    onTap: () {
-                      Navigator.of(ctx).pop();
-                      _api.callSimplePost('weeing/booster');
-                    },
-                  ),
-                  ListTile(
                     leading: const Icon(Icons.logout),
                     title: const Text('로그아웃'),
                     subtitle: const Text('현재 계정에서 로그아웃'),
                     onTap: () {
                       Navigator.of(ctx).pop();
-                      _api.callSimplePost('weeing/logout');
+                      _api.logout();
                     },
                   ),
                   ListTile(
@@ -629,33 +631,6 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                     onTap: () {
                       Navigator.of(ctx).pop();
                       _showLoginDialog();
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.exit_to_app),
-                    title: const Text('종료'),
-                    subtitle: const Text('Weeing 프로세스 종료'),
-                    onTap: () {
-                      Navigator.of(ctx).pop();
-                      _api.callSimplePost('weeing/exit');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.logout),
-                    title: const Text('마빌가기'),
-                    subtitle: const Text('마빌로 이동'),
-                    onTap: () {
-                      Navigator.of(ctx).pop();
-                      _api.callSimplePost('weeing/gomyster');
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.login),
-                    title: const Text('맵으로 돌아오기'),
-                    subtitle: const Text('마빌에서 나가기'),
-                    onTap: () {
-                      Navigator.of(ctx).pop();
-                      _api.callSimplePost('weeing/exitmyster');
                     },
                   ),
                   const SizedBox(height: 4),
@@ -730,7 +705,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                     )
                   else
                     MouseMode(
-                      basePath: widget.basePath,
+                      ip: widget.ip,
                       initialScale: _streamScale,
                       initialOffset: _streamOffset,
                       streamViewSize: _streamViewSize,

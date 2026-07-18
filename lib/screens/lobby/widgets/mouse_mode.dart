@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+
+import 'package:weeing_app/gateway/gateway.dart';
 
 /// 마우스 트랙패드 모드 위젯
 /// Google Chrome Remote Desktop 스타일:
@@ -7,7 +8,8 @@ import 'package:http/http.dart' as http;
 /// - 팬: 확대 상태에서 화면 이동 (경계 제한)
 /// - 더블탭: 확대/축소 토글
 class MouseMode extends StatefulWidget {
-  final String basePath;
+  /// 대상 머신 IP
+  final String ip;
   final Function(double) onScaleChanged;
   final Function(Offset) onOffsetChanged;
   final double initialScale;
@@ -21,7 +23,7 @@ class MouseMode extends StatefulWidget {
 
   const MouseMode({
     super.key,
-    required this.basePath,
+    required this.ip,
     required this.onScaleChanged,
     required this.onOffsetChanged,
     this.initialScale = 1.0,
@@ -54,22 +56,21 @@ class _MouseModeState extends State<MouseMode> {
   // 핀치 줌 중인지 여부
   bool _isPinching = false;
 
-  String get _mouseMoveUrl => '${widget.basePath}mouse/MouseMove';
-  String get _mouseClickUrl => '${widget.basePath}mouse/MouseClick';
-
+  // gateway.py 상대이동은 inputHandler /mouse/dmove?dx=&dy=
   Future<void> _sendMouseMove(int dx, int dy) async {
     try {
-      final url = '$_mouseMoveUrl/$dx/$dy';
-      await http.post(Uri.parse(url));
+      await Gateway.call(widget.ip, 'inputHandler/mouse/dmove',
+          method: 'POST', params: {'dx': dx, 'dy': dy});
     } catch (e) {
       debugPrint('MouseMode move error: $e');
     }
   }
 
+  // gateway.py mouse_click → inputHandler /mouse/click?click_mode=&delay=
   Future<void> _sendMouseClick(String button) async {
     try {
-      final url = '$_mouseClickUrl/$button';
-      await http.post(Uri.parse(url));
+      await Gateway.call(widget.ip, 'inputHandler/mouse/click',
+          method: 'POST', params: {'click_mode': button, 'delay': 0});
     } catch (e) {
       debugPrint('MouseMode click error: $e');
     }
