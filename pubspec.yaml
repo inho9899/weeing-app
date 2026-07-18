@@ -20,6 +20,7 @@ dependencies:
   web_socket_channel: ^2.4.0
   flutter_launcher_icons: ^0.13.1
   flutter_native_splash: ^2.3.10
+  android_alarm_manager_plus: ^5.1.0
 
 flutter_icons:
   android: true

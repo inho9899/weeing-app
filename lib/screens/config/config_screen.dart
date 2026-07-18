@@ -3,12 +3,15 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:permission_handler/permission_handler.dart';
 
 import 'package:weeing_app/gateway/gateway.dart';
+import 'package:weeing_app/scheduling/alarm_scheduler.dart';
 import 'models/device_info.dart';
 import 'widgets/device_row.dart';
 import 'widgets/add_ip_dialog.dart';
 import 'widgets/build_mapping_dialog.dart';
+import 'widgets/build_scheduler_dialog.dart';
 
 const String backgroundTaskKey = 'device_status_check';
 
@@ -23,6 +26,7 @@ class ConfigScreen extends StatefulWidget {
 class _ConfigScreenState extends State<ConfigScreen> {
   final List<DeviceInfo> _devices = [];
   Map<String, String> _buildMappings = {};
+  Map<String, List<Map<String, dynamic>>> _buildSchedules = {};
 
   Timer? _pollTimer;
   final FlutterLocalNotificationsPlugin _localNotifications =
@@ -37,11 +41,27 @@ class _ConfigScreenState extends State<ConfigScreen> {
   void initState() {
     super.initState();
     _initNotifications();
+    _requestExactAlarmPermission();
     _loadDevices();
     _loadBuildMappings();
+    _bootstrapSchedules();
     _pollTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
       _refreshAllStatuses();
     });
+  }
+
+  Future<void> _requestExactAlarmPermission() async {
+    try {
+      final status = await Permission.scheduleExactAlarm.status;
+      if (!status.isGranted) {
+        await Permission.scheduleExactAlarm.request();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _bootstrapSchedules() async {
+    await _loadBuildSchedules();
+    await AlarmScheduler.rescheduleAll(_buildSchedules);
   }
 
   Future<void> _initNotifications() async {
@@ -110,6 +130,41 @@ class _ConfigScreenState extends State<ConfigScreen> {
   Future<void> _saveBuildMappings() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('build_mapping', jsonEncode(_buildMappings));
+  }
+
+  Future<void> _loadBuildSchedules() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('build_scheduler');
+    if (raw == null || raw.isEmpty) return;
+
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) {
+        final nextSchedules = <String, List<Map<String, dynamic>>>{};
+        for (final entry in decoded.entries) {
+          final dayKey = entry.key.toString();
+          final value = entry.value;
+          if (value is List) {
+            final blocks = value
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList();
+            if (blocks.isNotEmpty) {
+              nextSchedules[dayKey] = blocks;
+            }
+          }
+        }
+        if (!mounted) return;
+        setState(() {
+          _buildSchedules = nextSchedules;
+        });
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveBuildSchedules() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('build_scheduler', jsonEncode(_buildSchedules));
   }
 
   @override
@@ -224,6 +279,28 @@ class _ConfigScreenState extends State<ConfigScreen> {
     await _saveBuildMappings();
   }
 
+  Future<void> _openBuildSchedulerScreen() async {
+    final result = await Navigator.of(context)
+        .push<Map<String, List<Map<String, dynamic>>>>(
+          MaterialPageRoute(
+            builder: (_) => BuildSchedulerDialog(
+              devices: List<DeviceInfo>.from(_devices),
+              buildMappings: _buildMappings,
+              initialSchedules: _buildSchedules,
+            ),
+          ),
+        );
+
+    if (result == null) return;
+
+    if (!mounted) return;
+    setState(() {
+      _buildSchedules = result;
+    });
+    await _saveBuildSchedules();
+    await AlarmScheduler.rescheduleAll(_buildSchedules);
+  }
+
   Future<void> _confirmDeleteDevice(int index) async {
     if (index < 0 || index >= _devices.length) return;
     final targetIp = _devices[index].ip;
@@ -272,25 +349,51 @@ class _ConfigScreenState extends State<ConfigScreen> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 12.0),
-            child: FilledButton.icon(
-              onPressed: _openBuildMappingScreen,
-              icon: const Icon(Icons.tune, size: 18),
-              label: const Text('빌드 매핑'),
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF3B82F6),
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 10,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FilledButton.icon(
+                  onPressed: _openBuildMappingScreen,
+                  icon: const Icon(Icons.tune, size: 18),
+                  label: const Text('빌드 매핑'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF3B82F6),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
                 ),
-                textStyle: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
+                const SizedBox(width: 8),
+                FilledButton.icon(
+                  onPressed: _openBuildSchedulerScreen,
+                  icon: const Icon(Icons.schedule, size: 18),
+                  label: const Text('빌드 스케줄러'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF0F766E),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    textStyle: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                  ),
                 ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20),
-                ),
-              ),
+              ],
             ),
           ),
         ],
