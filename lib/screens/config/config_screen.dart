@@ -521,6 +521,18 @@ class _ConfigScreenState extends State<ConfigScreen> {
       _devices[index] = device.copyWith(name: newName);
     });
     await _saveDevices();
+
+    // cloudflare 쪽 매핑(진짜 소스)은 이미 갱신됐다. PC가 지금 켜져 있으면
+    // 로컬 참고용 캐시(device_info.json)도 같이 맞춰준다 — 꺼져 있어도 위의
+    // 서버 갱신은 이미 끝났으니 실패해도 그냥 무시한다(best-effort).
+    try {
+      await Gateway.call(
+        device.ip,
+        'alarmHandler/handshake',
+        method: 'POST',
+        params: {'name': newName},
+      ).timeout(const Duration(seconds: 5));
+    } catch (_) {}
   }
 
   @override
