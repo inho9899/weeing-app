@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'package:weeing_app/gateway/gateway.dart';
 import 'models/device_info.dart';
 import 'widgets/device_row.dart';
 import 'widgets/add_ip_dialog.dart';
+import 'widgets/rename_device_dialog.dart';
 import 'widgets/build_mapping_dialog.dart';
 import 'widgets/build_scheduler_dialog.dart';
 
@@ -30,9 +32,9 @@ class _ConfigScreenState extends State<ConfigScreen> {
   final FlutterLocalNotificationsPlugin _localNotifications =
       FlutterLocalNotificationsPlugin();
 
-  // IPv4 형식 검사: xxx.xxx.xxx.xxx 또는 xxx.xxx.xxx.xxx:포트
+  // IPv4 형식 검사: xxx.xxx.xxx.xxx (port는 cloudflare가 서비스명으로 정하므로 안 받음)
   final RegExp _ipRegex = RegExp(
-    r'^([0-9]{1,3}\.){3}[0-9]{1,3}(:[0-9]{1,5})?$',
+    r'^([0-9]{1,3}\.){3}[0-9]{1,3}$',
   );
 
   @override
@@ -112,15 +114,63 @@ class _ConfigScreenState extends State<ConfigScreen> {
       iOS: iosSettings,
     );
     await _localNotifications.initialize(initSettings);
+
+    // FCM은 앱이 포그라운드일 때 시스템 알림 배너를 자동으로 띄워주지 않는다
+    // (백그라운드/종료 상태에서만 OS가 대신 표시함). 그래서 포그라운드 수신은
+    // 직접 받아서 로컬 알림으로 띄워줘야 한다.
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      final notification = message.notification;
+      if (notification == null) return;
+      _localNotifications.show(
+        notification.hashCode,
+        notification.title,
+        notification.body,
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'alert_channel',
+            'Alert Notifications',
+            channelDescription: 'Notification for device alert',
+            importance: Importance.max,
+            priority: Priority.high,
+          ),
+          iOS: DarwinNotificationDetails(),
+        ),
+      );
+    });
   }
 
   Future<void> _loadDevices() async {
     final prefs = await SharedPreferences.getInstance();
-    final deviceList = prefs.getStringList('device_list') ?? [];
+    final loaded = <DeviceInfo>[];
+
+    final raw = prefs.getString('device_list_v2');
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is List) {
+          for (final entry in decoded) {
+            if (entry is! Map) continue;
+            final ip = entry['ip']?.toString();
+            if (ip == null || ip.isEmpty) continue;
+            loaded.add(DeviceInfo(
+              ip: ip,
+              name: entry['name']?.toString(),
+              deviceId: entry['deviceId']?.toString(),
+            ));
+          }
+        }
+      } catch (_) {}
+    } else {
+      // 구버전 저장 포맷(ip 문자열 리스트) 마이그레이션: 명칭은 ip로 초기화.
+      final legacyList = prefs.getStringList('device_list') ?? [];
+      loaded.addAll(legacyList.map((ip) => DeviceInfo(ip: ip)));
+    }
+
     setState(() {
       _devices.clear();
-      _devices.addAll(deviceList.map((ip) => DeviceInfo(ip: ip)));
+      _devices.addAll(loaded);
     });
+    await _saveDevices();
     _refreshAllStatuses();
   }
 
@@ -159,10 +209,15 @@ class _ConfigScreenState extends State<ConfigScreen> {
 
   Future<void> _saveDevices() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(
-      'device_list',
-      _devices.map((d) => d.ip).toList(),
+    await prefs.setString(
+      'device_list_v2',
+      jsonEncode(_devices
+          .map((d) => {'ip': d.ip, 'name': d.name, 'deviceId': d.deviceId})
+          .toList()),
     );
+    // 구버전 키는 더 이상 쓰지 않지만, 남아있으면 다음 실행 때 다시
+    // 마이그레이션 분기를 타지 않도록 지운다.
+    await prefs.remove('device_list');
   }
 
   Future<void> _saveBuildMappingsLocalCache() async {
@@ -278,24 +333,41 @@ class _ConfigScreenState extends State<ConfigScreen> {
   }
 
   Future<void> _handleAddIp() async {
-    final newIp = await showAddIpDialog(context, _ipRegex);
-    if (newIp == null) return;
+    final result = await showAddIpDialog(context, _ipRegex);
+    if (result == null) return;
+    final newIp = result.ip;
+    final newName = result.name;
+
+    // 핸드셰이크 먼저: cloudflare가 이 ip의 PC(alarmHandler)에 직접 접속해서
+    // 별칭을 저장시키고 device_id→명칭 매핑까지 등록한다. 이게 성공해야만
+    // 이 PC가 실제로 살아있고 프록시로 도달 가능하다는 뜻이므로, 실패하면
+    // 로컬 목록에 추가하지 않는다.
+    final deviceId = await Gateway.registerDeviceName(
+      newIp,
+      newName,
+      widget.fcmToken,
+    );
+    if (deviceId == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'PC와 연결을 확인하지 못했습니다. IP와 PC 전원/네트워크를 확인 후 다시 시도해주세요.',
+          ),
+          duration: Duration(seconds: 6),
+        ),
+      );
+      return;
+    }
 
     setState(() {
-      _devices.add(DeviceInfo(ip: newIp));
+      _devices.add(DeviceInfo(ip: newIp, name: newName, deviceId: deviceId));
     });
     await _saveDevices();
     await _checkStatusForIndex(_devices.length - 1);
 
-    // 디바이스에 FCM 등록 요청
-    try {
-      await Gateway.call(
-        newIp,
-        'subaction/status/addFCM',
-        method: 'POST',
-        params: {'token': widget.fcmToken},
-      ).timeout(const Duration(seconds: 5));
-    } catch (_) {}
+    // FCM 발송 대상 등록은 별도 호출이 필요 없다 — cloudflare는 device_names.json에
+    // PC를 하나라도 등록한 토큰이면 자동으로 발송 대상으로 취급한다(위 handshake로 이미 등록됨).
   }
 
   Future<void> _openBuildMappingScreen() async {
@@ -360,14 +432,14 @@ class _ConfigScreenState extends State<ConfigScreen> {
 
   Future<void> _confirmDeleteDevice(int index) async {
     if (index < 0 || index >= _devices.length) return;
-    final targetIp = _devices[index].ip;
+    final targetName = _devices[index].name;
 
     final result = await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
           title: const Text('삭제 확인'),
-          content: Text('정말 "$targetIp" 을(를) 지우시겠습니까?'),
+          content: Text('정말 "$targetName" 을(를) 지우시겠습니까?'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -383,11 +455,72 @@ class _ConfigScreenState extends State<ConfigScreen> {
     );
 
     if (result == true) {
+      final deviceId = _devices[index].deviceId;
       setState(() {
         _devices.removeAt(index);
       });
       await _saveDevices();
+
+      // cloudflare 쪽 device_id→명칭 매핑도 같이 지운다 (없으면 PC가 죽은 채로
+      // 알림에 계속 뜨거나, 이 device_id를 재사용하는 다른 기기와 이름이 꼬일 수 있음).
+      // deviceId가 없는 건 구버전 흐름으로 추가된 기기 — cloudflare에 지울 대상이 없다.
+      if (deviceId != null) {
+        final ok = await Gateway.removeDeviceName(deviceId, widget.fcmToken);
+        if (!ok && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                '기기 목록에서는 지웠지만, 서버의 이름 매핑은 정리하지 못했습니다 '
+                '(네트워크 확인 후 다시 시도해주세요).',
+              ),
+              duration: Duration(seconds: 6),
+            ),
+          );
+        }
+      }
     }
+  }
+
+  Future<void> _handleRenameDevice(int index) async {
+    if (index < 0 || index >= _devices.length) return;
+    final device = _devices[index];
+
+    if (device.deviceId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            '예전 방식으로 추가된 기기라 이름을 수정할 수 없습니다. '
+            '삭제 후 다시 추가해주세요.',
+          ),
+          duration: Duration(seconds: 6),
+        ),
+      );
+      return;
+    }
+
+    final newName = await showRenameDeviceDialog(context, device.name);
+    if (newName == null || newName == device.name) return;
+
+    final ok = await Gateway.renameDeviceName(
+      device.deviceId!,
+      newName,
+      widget.fcmToken,
+    );
+    if (!ok) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('이름 수정에 실패했습니다. 네트워크 확인 후 다시 시도해주세요.'),
+          duration: Duration(seconds: 6),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _devices[index] = device.copyWith(name: newName);
+    });
+    await _saveDevices();
   }
 
   @override
@@ -474,8 +607,10 @@ class _ConfigScreenState extends State<ConfigScreen> {
                     for (int i = 0; i < _devices.length; i++) ...[
                       DeviceRow(
                         ip: _devices[i].ip,
+                        name: _devices[i].name,
                         color: _devices[i].color,
                         enabled: _devices[i].enabled,
+                        onRename: () => _handleRenameDevice(i),
                         onDelete: () => _confirmDeleteDevice(i),
                       ),
                       if (i != _devices.length - 1)

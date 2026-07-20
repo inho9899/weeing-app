@@ -4,10 +4,10 @@ import 'package:http/http.dart' as http;
 /// WEEING 앱의 단일 API 관문.
 ///
 /// 앱의 모든 원격 호출은 반드시 이 Gateway 를 거쳐 cloudflare 게이트웨이
-/// (api.nongameanbun.xyz) 의 /proxy 로 전달된다. cloudflare 는 {ip, api} 를 받아
+/// (api.nongameanbun.xyz) 의 /msa/proxy 로 전달된다. cloudflare 는 {ip, api} 를 받아
 /// 대상 머신(ip)의 해당 MSA 서비스로 요청을 프록시한다.
 ///
-///   app → https://api.nongameanbun.xyz/proxy  `{ ip, api: "{service}/{path}" }`
+///   app → https://api.nongameanbun.xyz/msa/proxy  `{ ip, api: "{service}/{path}" }`
 ///       → `http://{ip}:{servicePort}/{path}`
 ///
 /// SoT 는 msaInstaller 의 gateway.py 다. api 의 첫 세그먼트(서비스명)는
@@ -19,7 +19,7 @@ class Gateway {
   /// cloudflare 게이트웨이 도메인. 모든 API 는 여기를 반드시 거친다.
   static const String cloudflareBase = 'https://api.nongameanbun.xyz';
 
-  static String get _proxyUrl => '$cloudflareBase/proxy';
+  static String get _proxyUrl => '$cloudflareBase/msa/proxy';
 
   /// 대상 머신(ip)의 MSA 서비스로 요청을 프록시한다.
   ///
@@ -155,6 +155,80 @@ class Gateway {
     }
   }
 
+  /// PC 추가 핸드셰이크: app → cloudflare → pc 흐름의 진입점.
+  ///
+  /// app 은 (ip, 명칭)만 보낸다. cloudflare 가 그 ip 의 PC(alarmHandler)에
+  /// 직접 접속해서 별칭을 저장시키고 고유 device_id 를 받아온 뒤, 이 모바일
+  /// 기기(fcmToken) 기준 device_id→명칭 매핑까지 등록한다 — 앱은 한 번의
+  /// 호출로 끝난다. PC의 IP는 DHCP로 바뀔 수 있어 매핑 키로 쓰지 않는다.
+  ///
+  /// 성공하면 이후 이름 수정/삭제에 쓸 device_id 를 반환한다(앱이 로컬에
+  /// 캐싱해둬야 PC 재접속 없이 그 작업들을 할 수 있다). 실패(네트워크/프록시
+  /// 오류, PC 꺼짐 등) 시 null.
+  static Future<String?> registerDeviceName(
+    String ip,
+    String name,
+    String fcmToken,
+  ) async {
+    try {
+      final res = await http
+          .post(
+            Uri.parse('$cloudflareBase/message/devices'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'token': fcmToken,
+              'ip': _hostOnly(ip),
+              'name': name,
+            }),
+          )
+          .timeout(const Duration(seconds: 10)); // PC 왕복까지 포함하는 호출이라 여유를 둠
+      if (res.statusCode != 200) return null;
+      final resp = unwrap(res);
+      return resp is String && resp.isNotEmpty ? resp : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 캐싱해둔 device_id로 명칭만 바로 수정한다 — PC 재접속 불필요, PC가 꺼져 있어도 된다.
+  static Future<bool> renameDeviceName(
+    String deviceId,
+    String name,
+    String fcmToken,
+  ) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$cloudflareBase/message/devices/rename'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'token': fcmToken,
+          'device_id': deviceId,
+          'name': name,
+        }),
+      );
+      return res.statusCode == 200 && unwrap(res) == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 캐싱해둔 device_id로 명칭 매핑을 제거한다 (앱에서 PC 삭제 시).
+  static Future<bool> removeDeviceName(
+    String deviceId,
+    String fcmToken,
+  ) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$cloudflareBase/message/devices/remove'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'token': fcmToken, 'device_id': deviceId}),
+      );
+      return res.statusCode == 200 && unwrap(res) == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// 통일 응답 봉투 `{ resp, message }` 에서 `resp` 를 추출한다.
   ///
   /// 성공/실패는 HTTP 상태코드로 판단한다: 200 이 아니면 실패로 보고 null 을 반환.
@@ -183,10 +257,10 @@ class Gateway {
 
   /// 스트리밍/WebRTC 시그널링 WebSocket URL.
   /// cloudflare 터널이 WebSocket 을 지원하므로 도메인을 통해 대상 ip 의 스트리밍으로 브리지된다.
-  ///   `wss://api.nongameanbun.xyz/ws?ip={ip}`
+  ///   `wss://api.nongameanbun.xyz/streaming/ws?ip={ip}`
   static Uri signalingUri(String ip) {
     final wsBase = cloudflareBase.replaceFirst('https://', 'wss://').replaceFirst('http://', 'ws://');
-    return Uri.parse('$wsBase/ws').replace(queryParameters: {'ip': _hostOnly(ip)});
+    return Uri.parse('$wsBase/streaming/ws').replace(queryParameters: {'ip': _hostOnly(ip)});
   }
 
   /// "http://1.2.3.4:8000/" 같은 값이 들어와도 순수 host 만 추출한다.

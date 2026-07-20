@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 
+/// IP 추가 다이얼로그의 결과: (IP 주소, 이 기기를 부를 명칭)
+typedef AddDeviceResult = ({String ip, String name});
+
 class AddIpDialog extends StatefulWidget {
   final RegExp ipRegex;
 
@@ -13,28 +16,40 @@ class AddIpDialog extends StatefulWidget {
 }
 
 class _AddIpDialogState extends State<AddIpDialog> {
-  final _controller = TextEditingController();
-  String? _errorText;
+  final _ipController = TextEditingController();
+  final _nameController = TextEditingController();
+  String? _ipErrorText;
+  String? _nameErrorText;
 
   @override
   void dispose() {
-    _controller.dispose();
+    _ipController.dispose();
+    _nameController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('IP 주소 추가'),
+      title: const Text('PC 추가'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           TextField(
-            controller: _controller,
+            controller: _ipController,
             decoration: InputDecoration(
               labelText: 'IP 주소',
-              hintText: '예: 192.168.0.1 또는 192.168.0.1:8000',
-              errorText: _errorText,
+              hintText: '예: 192.168.0.1',
+              errorText: _ipErrorText,
+            ),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _nameController,
+            decoration: InputDecoration(
+              labelText: '명칭',
+              hintText: '예: 거실 PC',
+              errorText: _nameErrorText,
             ),
           ),
         ],
@@ -46,16 +61,18 @@ class _AddIpDialogState extends State<AddIpDialog> {
         ),
         TextButton(
           onPressed: () {
-            final text = _controller.text.trim();
+            final ip = _ipController.text.trim();
+            final name = _nameController.text.trim();
 
-            if (!widget.ipRegex.hasMatch(text)) {
-              setState(() {
-                _errorText = '올바른 IP 형식(xxx.xxx.xxx.xxx)으로 다시 입력하세요.';
-              });
-              return;
-            }
+            setState(() {
+              _ipErrorText = widget.ipRegex.hasMatch(ip)
+                  ? null
+                  : '올바른 IP 형식(xxx.xxx.xxx.xxx)으로 다시 입력하세요.';
+              _nameErrorText = name.isEmpty ? '명칭을 입력하세요.' : null;
+            });
+            if (_ipErrorText != null || _nameErrorText != null) return;
 
-            Navigator.of(context).pop(text);
+            Navigator.of(context).pop((ip: ip, name: name));
           },
           child: const Text('확인'),
         ),
@@ -64,9 +81,9 @@ class _AddIpDialogState extends State<AddIpDialog> {
   }
 }
 
-/// AddIpDialog를 표시하고 결과 IP를 반환
-Future<String?> showAddIpDialog(BuildContext context, RegExp ipRegex) {
-  return showDialog<String>(
+/// AddIpDialog를 표시하고 결과 {ip, name}을 반환
+Future<AddDeviceResult?> showAddIpDialog(BuildContext context, RegExp ipRegex) {
+  return showDialog<AddDeviceResult>(
     context: context,
     barrierDismissible: false,
     builder: (context) => AddIpDialog(ipRegex: ipRegex),

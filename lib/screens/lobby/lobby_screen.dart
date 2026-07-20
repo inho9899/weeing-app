@@ -14,7 +14,7 @@ import 'widgets/mouse_mode.dart';
 import 'services/lobby_api_service.dart';
 
 class LobbyScreen extends StatefulWidget {
-  /// 대상 머신 IP (예: "192.168.0.5" 또는 "192.168.0.5:8000")
+  /// 대상 머신 IP (예: "192.168.0.5")
   final String ip;
   const LobbyScreen({super.key, required this.ip});
 

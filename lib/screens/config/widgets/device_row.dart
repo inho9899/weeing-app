@@ -3,24 +3,32 @@ import 'package:weeing_app/screens/lobby/lobby_screen.dart';
 
 class DeviceRow extends StatelessWidget {
   final String ip;
+  final String name;
   final Color color;
   final bool enabled;
+  final VoidCallback? onRename;
   final VoidCallback? onDelete;
 
   const DeviceRow({
     super.key,
     required this.ip,
+    required this.name,
     required this.color,
     required this.enabled,
+    this.onRename,
     this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
-    final textStyle = TextStyle(
+    final nameStyle = TextStyle(
       fontSize: 16,
       color: enabled ? color : Colors.grey,
       fontWeight: enabled ? FontWeight.w500 : FontWeight.w400,
+    );
+    final ipStyle = TextStyle(
+      fontSize: 12,
+      color: enabled ? Colors.black54 : Colors.grey,
     );
 
     return InkWell(
@@ -46,7 +54,19 @@ class DeviceRow extends StatelessWidget {
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(ip, style: textStyle),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(name, style: nameStyle),
+                  if (name != ip) Text(ip, style: ipStyle),
+                ],
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.edit_outlined),
+              tooltip: '이름 수정',
+              onPressed: onRename,
             ),
             IconButton(
               icon: const Icon(Icons.delete_outline),
