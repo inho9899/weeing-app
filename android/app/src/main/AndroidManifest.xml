@@ -15,11 +15,6 @@
     <uses-feature android:name="android.hardware.camera" />
     <uses-feature android:name="android.hardware.camera.autofocus" />
 
-    <!-- ===== 빌드 스케줄러 백그라운드 알람 (android_alarm_manager_plus) ===== -->
-    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-
     <application
         android:label="weeing_app"
         android:name="${applicationName}"
@@ -52,23 +47,6 @@
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-
-        <!-- ===== 빌드 스케줄러 백그라운드 알람 (android_alarm_manager_plus) ===== -->
-        <service
-            android:name="dev.fluttercommunity.plus.androidalarmmanager.AlarmService"
-            android:exported="false"
-            android:permission="android.permission.BIND_JOB_SERVICE" />
-        <receiver
-            android:name="dev.fluttercommunity.plus.androidalarmmanager.AlarmBroadcastReceiver"
-            android:exported="false" />
-        <receiver
-            android:name="dev.fluttercommunity.plus.androidalarmmanager.RebootBroadcastReceiver"
-            android:enabled="false"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-            </intent-filter>
-        </receiver>
     </application>
 
     <!-- PROCESS_TEXT 쿼리 (기본 템플릿 그대로 유지) -->

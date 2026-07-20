@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:android_alarm_manager_plus/android_alarm_manager_plus.dart';
 
 import 'firebase_options.dart';
 import 'screens/config/config_screen.dart';
@@ -42,13 +41,6 @@ void main() async {
     // print('[DEBUG] FCM 토큰: $token');
   } catch (e) {
     // print('[ERROR] FCM 토큰 획득 실패: $e');
-  }
-
-  // 빌드 스케줄러 백그라운드 알람 서비스 초기화
-  try {
-    await AndroidAlarmManager.initialize();
-  } catch (e) {
-    // print('[ERROR] AndroidAlarmManager.initialize 실패: $e');
   }
 
   runApp(const MyApp());

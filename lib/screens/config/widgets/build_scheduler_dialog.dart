@@ -5,6 +5,7 @@ import 'package:weeing_app/gateway/gateway.dart';
 
 import '../models/device_info.dart';
 import '../../lobby/widgets/start_time_control.dart';
+import 'build_review_screen.dart';
 
 const Color _kBg = Color(0xFFF3F3F5);
 const Color _kAccent = Color(0xFF0F766E);
@@ -752,6 +753,28 @@ class _DayTimelineScreenState extends State<_DayTimelineScreen> {
         .toList();
   }
 
+  void _openReview() {
+    Navigator.of(context).push(
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) {
+          return BuildReviewScreen(
+            date: widget.date,
+            devices: widget.devices,
+            buildMappings: widget.buildMappings,
+            blocks: _buildResult(),
+          );
+        },
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          final tween = Tween<Offset>(
+            begin: const Offset(1.0, 0.0),
+            end: Offset.zero,
+          ).chain(CurveTween(curve: Curves.easeInOut));
+          return SlideTransition(position: animation.drive(tween), child: child);
+        },
+      ),
+    );
+  }
+
   Future<void> _openAddBlockSheet(String deviceIp, {_ScheduleBlock? existing}) async {
     final accounts =
         widget.accountsByDevice[deviceIp] ?? const <_AccountOption>[];
@@ -1003,6 +1026,12 @@ class _DayTimelineScreenState extends State<_DayTimelineScreen> {
         scrolledUnderElevation: 0.5,
         centerTitle: false,
         actions: [
+          TextButton.icon(
+            onPressed: _blocks.isEmpty ? null : _openReview,
+            icon: const Icon(Icons.fact_check_outlined, size: 18),
+            label: const Text('검토'),
+            style: TextButton.styleFrom(foregroundColor: _kAccent),
+          ),
           TextButton.icon(
             onPressed: _blocks.isEmpty
                 ? null
