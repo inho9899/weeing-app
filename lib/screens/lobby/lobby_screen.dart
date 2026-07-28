@@ -90,10 +90,24 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
   /// 드롭다운에 보여줄 목록. 캐릭터 매핑이 있으면 캐릭터명 목록, 매핑이
   /// 아예 없으면 raw 빌드명 목록을 그대로 보여준다 (매핑 전에도 뭔가 고를 수 있게).
+  /// 매핑이 모호해(같은 빌드를 공유하는 캐릭터가 둘 이상) _currentCharacter가
+  /// raw 빌드명으로 폴백된 경우, 그 값도 목록에 없으면 DropdownButton이
+  /// value-not-in-items로 assert 하므로 없으면 추가해준다.
   List<String> get _characterDropdownItems {
-    if (_characterToBuild.isNotEmpty) return _characterToBuild.keys.toList();
-    return _builds;
+    final items = _characterToBuild.isNotEmpty
+        ? _characterToBuild.keys.toList()
+        : List<String>.from(_builds);
+    if (_currentCharacter.isNotEmpty && !items.contains(_currentCharacter)) {
+      items.add(_currentCharacter);
+    }
+    return items;
   }
+
+  /// 드롭다운 표시 텍스트: "캐릭터명 - 빌드명". 캐릭터로 매핑 안 된 값(raw
+  /// 빌드명 자체가 값인 경우)은 라벨을 따로 두지 않아 값 그대로 보여준다.
+  Map<String, String> get _characterDropdownLabels => {
+        for (final e in _characterToBuild.entries) e.key: '${e.key} - ${e.value}',
+      };
 
   @override
   void initState() {
@@ -375,30 +389,50 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       if (build != null && build.isNotEmpty) mapping[name] = build;
     }
 
+    // 빌드→캐릭터 역매핑. 같은 PC의 두 캐릭터가 같은 빌드를 공유하면 빌드명만으로는
+    // 어느 쪽이 실행 중인지 알 수 없으므로, 그 빌드는 역매핑에서 아예 제외한다
+    // (하나를 임의로 골라 잘못 표시하는 것보다 "모름"으로 두는 게 안전).
+    final buildUseCount = <String, int>{};
+    for (final build in mapping.values) {
+      buildUseCount[build] = (buildUseCount[build] ?? 0) + 1;
+    }
+    final reverse = <String, String>{
+      for (final e in mapping.entries)
+        if (buildUseCount[e.value] == 1) e.value: e.key,
+    };
+
     if (!mounted) return;
     setState(() {
       _characterToBuild = mapping;
-      _buildToCharacter = {for (final e in mapping.entries) e.value: e.key};
+      _buildToCharacter = reverse;
       _resolveCurrentCharacter();
     });
   }
 
-  /// _currentMap(실제 빌드명) 기준으로 드롭다운에 표시할 캐릭터명을 다시 계산한다.
-  /// 실행 중인 빌드가 로컬 매핑에 없어도(수동 실행 등) "알 수 없음"으로 비우지
-  /// 않고, 매핑된 첫 캐릭터 → (매핑이 아예 없으면) 첫 빌드 순으로 항상 뭔가
-  /// 표시되게 한다.
+  /// _currentMap(실제 빌드명, start()에 그대로 쓰이는 값)에서 드롭다운에 표시할
+  /// 라벨만 계산한다. 실제 값(_currentMap)은 여기서 절대 바꾸지 않는다 —
+  /// 표시용 캐릭터명을 못 찾았다고 다른 빌드로 덮어써버리면 "실행 중" 표시와
+  /// 실제 실행 중인 빌드가 어긋나 Start를 눌렀을 때 엉뚱한 빌드가 재시작될 수 있다.
+  ///
+  /// _currentMap이 아직 비어있을 때(앱 진입 직후, 아무 것도 선택/실행 안 됨)만
+  /// 매핑된 첫 캐릭터 → (매핑이 아예 없으면) 첫 빌드 순으로 기본값을 잡는다.
   void _resolveCurrentCharacter() {
-    if (_currentMap.isNotEmpty && _buildToCharacter.containsKey(_currentMap)) {
-      _currentCharacter = _buildToCharacter[_currentMap]!;
-    } else if (_characterToBuild.isNotEmpty) {
-      _currentCharacter = _characterToBuild.keys.first;
-      _currentMap = _characterToBuild[_currentCharacter]!;
-    } else if (_builds.isNotEmpty) {
-      _currentCharacter = _builds.first;
-      _currentMap = _builds.first;
-    } else {
-      _currentCharacter = '';
+    if (_currentMap.isEmpty) {
+      if (_characterToBuild.isNotEmpty) {
+        _currentCharacter = _characterToBuild.keys.first;
+        _currentMap = _characterToBuild[_currentCharacter]!;
+      } else if (_builds.isNotEmpty) {
+        _currentCharacter = _builds.first;
+        _currentMap = _builds.first;
+      } else {
+        _currentCharacter = '';
+      }
+      return;
     }
+
+    // 매핑에 없거나(수동 실행) 같은 빌드를 공유하는 캐릭터가 둘 이상이라 모호하면
+    // 캐릭터명 대신 실제 빌드명을 그대로 라벨로 보여준다.
+    _currentCharacter = _buildToCharacter[_currentMap] ?? _currentMap;
   }
 
   /// cycle(statusChecker) 과 running_build(mainAction) 폴링 (1초마다, 진입 시 1회 포함)
@@ -764,6 +798,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                     LobbyControls(
                       builds: _characterDropdownItems,
                       currentMap: _currentCharacter,
+                      itemLabels: _characterDropdownLabels,
                       onMapChanged: (v) {
                         if (v == null) return;
                         setState(() {

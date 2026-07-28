@@ -9,6 +9,10 @@ class LobbyControls extends StatelessWidget {
   final Widget cycle;
   final Widget startTime;
 
+  /// builds의 값(선택/식별에 쓰는 값) → 실제로 보여줄 텍스트.
+  /// 없는 항목은 값 그대로 표시한다 (예: "캐릭터명 - 빌드명" 라벨용).
+  final Map<String, String>? itemLabels;
+
   const LobbyControls({
     super.key,
     required this.builds,
@@ -18,6 +22,7 @@ class LobbyControls extends StatelessWidget {
     required this.onPause,
     required this.cycle,
     required this.startTime,
+    this.itemLabels,
   });
 
   @override
@@ -44,7 +49,10 @@ class LobbyControls extends StatelessWidget {
                   .map(
                     (b) => DropdownMenuItem(
                       value: b,
-                      child: Text(b),
+                      child: Text(
+                        itemLabels?[b] ?? b,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   )
                   .toList(),
