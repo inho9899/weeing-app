@@ -1,6 +1,26 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 
+/// 캡차 도움(typeliecheck) 진행 상태.
+/// none: 대기 중인 캡차 없음. pending: 답 입력 대기. processing: 방금 낸 답을
+/// PC가 확인하는 중(타이핑+판정). resolved: 성공. failed: 3번 기회 소진.
+enum CaptchaState { none, pending, processing, resolved, failed }
+
+CaptchaState _parseCaptchaState(String? raw) {
+  switch (raw) {
+    case 'pending':
+      return CaptchaState.pending;
+    case 'processing':
+      return CaptchaState.processing;
+    case 'resolved':
+      return CaptchaState.resolved;
+    case 'failed':
+      return CaptchaState.failed;
+    default:
+      return CaptchaState.none;
+  }
+}
+
 /// WEEING 앱의 단일 API 관문.
 ///
 /// 앱의 모든 원격 호출은 반드시 이 Gateway 를 거쳐 cloudflare 게이트웨이
@@ -222,6 +242,42 @@ class Gateway {
         Uri.parse('$cloudflareBase/message/devices/remove'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'token': fcmToken, 'device_id': deviceId}),
+      );
+      return res.statusCode == 200 && unwrap(res) == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 이 device의 캡차 도움(typeliecheck) 진행 상태를 조회한다.
+  /// PC가 자동으로 못 푸는 왜곡 캡차를 GIF로 올려두면 사람이 보고 답해야 한다.
+  /// 서버가 60초 넘은 row는 상태와 무관하게 none으로 내려주므로(오래된 캡차가
+  /// 계속 "대기 중"으로 보이는 것 방지), 네트워크 실패 시에도 none으로 폴백한다.
+  static Future<CaptchaState> fetchCaptchaState(String deviceId) async {
+    try {
+      final res = await http.get(
+        Uri.parse('$cloudflareBase/captcha/pending/$deviceId'),
+      );
+      if (res.statusCode != 200) return CaptchaState.none;
+      final resp = unwrap(res);
+      if (resp is! Map) return CaptchaState.none;
+      return _parseCaptchaState(resp['state'] as String?);
+    } catch (_) {
+      return CaptchaState.none;
+    }
+  }
+
+  /// 캡차 GIF를 바로 표시할 수 있는 URL (Image.network에 그대로 사용).
+  static String captchaGifUrl(String deviceId) =>
+      '$cloudflareBase/captcha/gif/$deviceId';
+
+  /// 사람이 입력한 캡차 답을 제출한다. PC가 이 답을 폴링해서 받아 타이핑한다.
+  static Future<bool> submitCaptchaAnswer(String deviceId, String answer) async {
+    try {
+      final res = await http.post(
+        Uri.parse('$cloudflareBase/captcha/answer'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'device_id': deviceId, 'answer': answer}),
       );
       return res.statusCode == 200 && unwrap(res) == 0;
     } catch (_) {

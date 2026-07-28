@@ -17,9 +17,12 @@ class MouseMode extends StatefulWidget {
   final TextEditingController commandController;
   final VoidCallback onSend;
   final VoidCallback onConvertMode;
-  
+
   /// 스트림 뷰 사이즈 (경계 계산용)
   final Size? streamViewSize;
+
+  /// 캡차 도움 탭에 사람 입력이 필요한 상태가 있으면 true — 빨간 느낌표로 표시.
+  final bool needsAttention;
 
   const MouseMode({
     super.key,
@@ -32,6 +35,7 @@ class MouseMode extends StatefulWidget {
     required this.onSend,
     required this.onConvertMode,
     this.streamViewSize,
+    this.needsAttention = false,
   });
 
   @override
@@ -245,13 +249,31 @@ class _MouseModeState extends State<MouseMode> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Text(
-                      'Trackpad mode',
-                      style: TextStyle(
-                        color: Colors.black45,
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Text(
+                          'Trackpad mode',
+                          style: TextStyle(
+                            color: Colors.black45,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        if (widget.needsAttention) ...[
+                          const SizedBox(width: 8),
+                          const Icon(Icons.error, color: Colors.redAccent, size: 18),
+                          const SizedBox(width: 4),
+                          const Text(
+                            '캡차 도움 확인 필요',
+                            style: TextStyle(
+                              color: Colors.redAccent,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: 8),
                     Text(

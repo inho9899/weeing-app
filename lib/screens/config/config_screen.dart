@@ -620,6 +620,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
                       DeviceRow(
                         ip: _devices[i].ip,
                         name: _devices[i].name,
+                        deviceId: _devices[i].deviceId,
                         color: _devices[i].color,
                         enabled: _devices[i].enabled,
                         onRename: () => _handleRenameDevice(i),

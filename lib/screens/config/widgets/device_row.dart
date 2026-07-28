@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:weeing_app/screens/lobby/lobby_screen.dart';
+import 'package:weeing_app/screens/lobby/pc_tabs_screen.dart';
 
 class DeviceRow extends StatelessWidget {
   final String ip;
   final String name;
+  final String? deviceId;
   final Color color;
   final bool enabled;
   final VoidCallback? onRename;
@@ -13,6 +14,7 @@ class DeviceRow extends StatelessWidget {
     super.key,
     required this.ip,
     required this.name,
+    required this.deviceId,
     required this.color,
     required this.enabled,
     this.onRename,
@@ -34,10 +36,10 @@ class DeviceRow extends StatelessWidget {
     return InkWell(
       onTap: enabled
           ? () {
-              debugPrint('[DeviceRow] Navigate to LobbyScreen with ip: $ip');
+              debugPrint('[DeviceRow] Navigate to PcTabsScreen with ip: $ip');
               Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => LobbyScreen(ip: ip),
+                  builder: (_) => PcTabsScreen(ip: ip, deviceId: deviceId),
                 ),
               );
             }

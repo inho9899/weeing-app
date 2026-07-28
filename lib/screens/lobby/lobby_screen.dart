@@ -16,7 +16,21 @@ import 'services/lobby_api_service.dart';
 class LobbyScreen extends StatefulWidget {
   /// 대상 머신 IP (예: "192.168.0.5")
   final String ip;
-  const LobbyScreen({super.key, required this.ip});
+
+  /// 캡차 도움 탭에 사람 입력이 필요한 상태가 있는지 — 마우스 모드 화면에
+  /// 빨간 느낌표로 표시한다 (PcTabsScreen이 캡차 도움 탭 상태를 보고 넘겨줌).
+  final bool captchaNeedsAttention;
+
+  /// 트랙패드(마우스 모드) 전환 시 호출 — PcTabsScreen이 이걸로 상단
+  /// 제어/캡차도움 탭바를 마우스 모드일 때만 보여준다.
+  final ValueChanged<bool>? onTrackpadModeChanged;
+
+  const LobbyScreen({
+    super.key,
+    required this.ip,
+    this.captchaNeedsAttention = false,
+    this.onTrackpadModeChanged,
+  });
 
   @override
   State<LobbyScreen> createState() => _LobbyScreenState();
@@ -54,6 +68,10 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   Offset _streamOffset = Offset.zero;
   Size _streamViewSize = const Size(400, 225); // 16:9 기본값
 
+  // 스트리머 캡처 영역 오프셋 (streaming/main.py POST /streamer/start 기본값 x=0,y=30 과 고정 동일)
+  static const int _captureOffsetX = 0;
+  static const int _captureOffsetY = 30;
+
   // ===== Wheel controllers =====
   late FixedExtentScrollController _cycleCtrl;
   late FixedExtentScrollController _hourCtrl;
@@ -78,6 +96,11 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     });
 
     WidgetsBinding.instance.addObserver(this);
+
+    // 부모(PcTabsScreen)에 초기 트랙패드 모드 상태를 알려 탭바 표시 여부를 맞춘다.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.onTrackpadModeChanged?.call(_trackpadMode);
+    });
 
     _fetchBuildList();
     _fetchCycleAndBuild();
@@ -433,8 +456,8 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
     final nx = (streamPt.dx / viewWidth).clamp(0.0, 1.0);
     final ny = (streamPt.dy / viewHeight).clamp(0.0, 1.0);
-    final x = (nx * sw).round();
-    final y = (ny * sh).round();
+    final x = (nx * sw).round() + _captureOffsetX;
+    final y = (ny * sh).round() + _captureOffsetY;
 
     if (clickButton != null) {
       _api.mouseClickAt(clickButton, x, y);
@@ -714,6 +737,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                       commandController: _commandController,
                       onSend: _handleSend,
                       onConvertMode: _handleConvert,
+                      needsAttention: widget.captchaNeedsAttention,
                     ),
                   const SizedBox(height: 24),
                   Align(
@@ -725,6 +749,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                           _streamScale = 1.0;
                           _streamOffset = Offset.zero;
                         });
+                        widget.onTrackpadModeChanged?.call(_trackpadMode);
 
                         if (!_trackpadMode) {
                           _initialStatusFetched = false;
