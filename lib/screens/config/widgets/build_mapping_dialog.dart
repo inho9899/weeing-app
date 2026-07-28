@@ -48,19 +48,26 @@ class _BuildMappingDialogState extends State<BuildMappingDialog> {
       final results = await Future.wait(
         widget.devices.map((device) async {
           final accounts = await _fetchAccounts(device.ip);
-          final builds = await _fetchBuilds(device.ip);
-          return MapEntry(
-            device.ip,
-            _DeviceOptions(accounts: accounts, builds: builds),
-          );
+          return MapEntry(device.ip, accounts);
         }),
       );
 
       if (!mounted) return;
 
+      // 모든 기기가 FinalBuild.py 전체 빌드 목록을 공유하므로, 한 기기에서만
+      // 조회해 전 기기에 재사용한다 (오프라인 대비, 응답 있는 기기까지 순회).
+      List<String> sharedBuilds = const [];
+      for (final device in widget.devices) {
+        final builds = await _fetchBuilds(device.ip);
+        if (builds.isNotEmpty) {
+          sharedBuilds = builds;
+          break;
+        }
+      }
+
       for (final entry in results) {
-        _accountsByDevice[entry.key] = entry.value.accounts;
-        _buildsByDevice[entry.key] = entry.value.builds;
+        _accountsByDevice[entry.key] = entry.value;
+        _buildsByDevice[entry.key] = sharedBuilds;
       }
 
       _applyInitialSelections();
@@ -584,13 +591,6 @@ class _BuildMappingDialogState extends State<BuildMappingDialog> {
   }
 }
 
-class _DeviceOptions {
-  final List<_MacroOption> accounts;
-  final List<String> builds;
-
-  const _DeviceOptions({required this.accounts, required this.builds});
-}
-
 class _MacroOption {
   final String key;
   final String label;
@@ -603,7 +603,9 @@ class _MacroOption {
     final label = name.isNotEmpty
         ? (id.isNotEmpty && id != name ? '$name ($id)' : name)
         : (id.isNotEmpty ? id : 'Unknown');
-    final key = id.isNotEmpty ? id : (name.isNotEmpty ? name : label);
+    // 캐릭터명(name) 기준으로 키를 잡는다 — 이제 모든 기기의 빌드 목록이 동일하므로
+    // 계정(id) 대신 캐릭터명으로 빌드를 매핑한다.
+    final key = name.isNotEmpty ? name : (id.isNotEmpty ? id : label);
 
     return _MacroOption(key: key, label: label);
   }

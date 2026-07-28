@@ -102,7 +102,9 @@ class _AccountOption {
     final label = name.isNotEmpty
         ? (id.isNotEmpty && id != name ? '$name ($id)' : name)
         : (id.isNotEmpty ? id : 'Unknown');
-    final key = id.isNotEmpty ? id : (name.isNotEmpty ? name : label);
+    // 캐릭터명(name) 기준으로 키를 잡는다 — build_mapping_dialog의 캐릭터명:빌드
+    // 매핑과 동일한 키 체계를 써야 buildMappings 조회가 어긋나지 않는다.
+    final key = name.isNotEmpty ? name : (id.isNotEmpty ? id : label);
     return _AccountOption(key: key, label: label);
   }
 }

@@ -149,9 +149,9 @@ class Gateway {
 
   static Future<Map<String, String>?> fetchBuildMapping() async {
     try {
-      final res = await http.get(
-        Uri.parse('$cloudflareBase/scheduler/build_mapping'),
-      );
+      final res = await http
+          .get(Uri.parse('$cloudflareBase/scheduler/build_mapping'))
+          .timeout(const Duration(seconds: 5)); // 프록시 죽어있을 때 무한 대기 방지
       if (res.statusCode != 200) return null;
       final body = jsonDecode(res.body);
       final raw = body is Map ? body['resp'] : null;

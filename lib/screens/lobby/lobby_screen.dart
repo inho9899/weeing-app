@@ -59,6 +59,12 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   String _currentMap = '';
   String? _runningBuildFromStatus;
 
+  // 캐릭터명 : 빌드 매핑 (config 화면에서 저장, cloudflare 가 SoT).
+  // 이 기기(macros)에 있는 캐릭터로만 좁혀서 사용한다.
+  Map<String, String> _characterToBuild = {};
+  Map<String, String> _buildToCharacter = {};
+  String _currentCharacter = '';
+
   final TextEditingController _commandController = TextEditingController();
   Timer? _pollTimer;      // cycle 폴링 (1초)
   Timer? _timeSyncTimer;  // 시간 동기화 (1분)
@@ -82,6 +88,13 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
   String get _hostText => widget.ip;
 
+  /// 드롭다운에 보여줄 목록. 캐릭터 매핑이 있으면 캐릭터명 목록, 매핑이
+  /// 아예 없으면 raw 빌드명 목록을 그대로 보여준다 (매핑 전에도 뭔가 고를 수 있게).
+  List<String> get _characterDropdownItems {
+    if (_characterToBuild.isNotEmpty) return _characterToBuild.keys.toList();
+    return _builds;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -103,6 +116,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     });
 
     _fetchBuildList();
+    _fetchCharacterMapping();
     _fetchCycleAndBuild();
     _syncTime();
 
@@ -328,6 +342,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
   Future<void> _fetchBuildList() async {
     final list = await _api.fetchBuildList();
+    if (!mounted) return;
     setState(() {
       _builds = list;
       if (_runningBuildFromStatus != null &&
@@ -335,10 +350,55 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
           _runningBuildFromStatus != 'None' &&
           _builds.contains(_runningBuildFromStatus)) {
         _currentMap = _runningBuildFromStatus!;
-      } else if (_currentMap.isEmpty && _builds.isNotEmpty) {
-        _currentMap = _builds[0];
       }
+      // 실행 중이 아니면 _resolveCurrentCharacter()가 매핑된 첫 캐릭터로
+      // 기본값을 잡는다 (여기서 raw 빌드로 기본값을 잡으면 매핑 안 된 빌드가
+      // 걸려 "알 수 없음"으로 빠지는 문제가 있었다).
+      _resolveCurrentCharacter();
     });
+  }
+
+  /// 이 기기(macros)의 캐릭터명으로 좁힌 캐릭터명:빌드 매핑을 가져온다.
+  /// SoT는 cloudflare(scheduler/build_mapping) — config 화면의 빌드 매핑 다이얼로그와 동일한 값.
+  Future<void> _fetchCharacterMapping() async {
+    final macros = await _api.fetchMacros();
+    final localNames = macros
+        .map((m) => (m['name'] ?? '').toString().trim())
+        .where((n) => n.isNotEmpty)
+        .toSet();
+
+    final remoteMapping = await Gateway.fetchBuildMapping() ?? {};
+
+    final mapping = <String, String>{};
+    for (final name in localNames) {
+      final build = remoteMapping[name];
+      if (build != null && build.isNotEmpty) mapping[name] = build;
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _characterToBuild = mapping;
+      _buildToCharacter = {for (final e in mapping.entries) e.value: e.key};
+      _resolveCurrentCharacter();
+    });
+  }
+
+  /// _currentMap(실제 빌드명) 기준으로 드롭다운에 표시할 캐릭터명을 다시 계산한다.
+  /// 실행 중인 빌드가 로컬 매핑에 없어도(수동 실행 등) "알 수 없음"으로 비우지
+  /// 않고, 매핑된 첫 캐릭터 → (매핑이 아예 없으면) 첫 빌드 순으로 항상 뭔가
+  /// 표시되게 한다.
+  void _resolveCurrentCharacter() {
+    if (_currentMap.isNotEmpty && _buildToCharacter.containsKey(_currentMap)) {
+      _currentCharacter = _buildToCharacter[_currentMap]!;
+    } else if (_characterToBuild.isNotEmpty) {
+      _currentCharacter = _characterToBuild.keys.first;
+      _currentMap = _characterToBuild[_currentCharacter]!;
+    } else if (_builds.isNotEmpty) {
+      _currentCharacter = _builds.first;
+      _currentMap = _builds.first;
+    } else {
+      _currentCharacter = '';
+    }
   }
 
   /// cycle(statusChecker) 과 running_build(mainAction) 폴링 (1초마다, 진입 시 1회 포함)
@@ -367,6 +427,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       } else {
         _runningBuildFromStatus = null;
       }
+      _resolveCurrentCharacter();
     });
 
     if (!_initialStatusFetched) {
@@ -701,11 +762,16 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                   const SizedBox(height: 16),
                   if (!_trackpadMode)
                     LobbyControls(
-                      builds: _builds,
-                      currentMap: _currentMap,
+                      builds: _characterDropdownItems,
+                      currentMap: _currentCharacter,
                       onMapChanged: (v) {
                         if (v == null) return;
-                        setState(() => _currentMap = v);
+                        setState(() {
+                          _currentCharacter = v;
+                          // 매핑이 있으면 캐릭터명 → 빌드명 resolve, 없으면
+                          // 드롭다운 값 자체가 이미 raw 빌드명이다.
+                          _currentMap = _characterToBuild[v] ?? v;
+                        });
                       },
                       onStart: _handleStart,
                       onPause: _handlePause,
