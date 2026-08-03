@@ -13,6 +13,9 @@ class LobbyControls extends StatelessWidget {
   /// 없는 항목은 값 그대로 표시한다 (예: "캐릭터명 - 빌드명" 라벨용).
   final Map<String, String>? itemLabels;
 
+  /// currentMap이 비어있을 때(실행 중도 아니고 선택도 안 됐을 때) 보여줄 안내 문구.
+  final String? hint;
+
   const LobbyControls({
     super.key,
     required this.builds,
@@ -23,6 +26,7 @@ class LobbyControls extends StatelessWidget {
     required this.cycle,
     required this.startTime,
     this.itemLabels,
+    this.hint,
   });
 
   @override
@@ -41,6 +45,13 @@ class LobbyControls extends StatelessWidget {
           child: DropdownButtonHideUnderline(
             child: DropdownButton<String>(
               value: currentMap.isNotEmpty ? currentMap : null,
+              hint: hint == null
+                  ? null
+                  : Text(
+                      hint!,
+                      style: TextStyle(color: Colors.grey[400]),
+                      overflow: TextOverflow.ellipsis,
+                    ),
               isExpanded: true,
               dropdownColor: Colors.grey[850],
               iconEnabledColor: Colors.white,
