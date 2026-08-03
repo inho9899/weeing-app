@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 
 /// 캡차 도움(typeliecheck) 진행 상태.
 /// none: 대기 중인 캡차 없음. pending: 답 입력 대기. processing: 방금 낸 답을
-/// PC가 확인하는 중(타이핑+판정). resolved: 성공. failed: 3번 기회 소진.
+/// PC가 확인하는 중(타이핑+판정). resolved: 성공. failed: 시간 내 미해결.
 enum CaptchaState { none, pending, processing, resolved, failed }
 
 CaptchaState _parseCaptchaState(String? raw) {
@@ -251,7 +251,7 @@ class Gateway {
 
   /// 이 device의 캡차 도움(typeliecheck) 진행 상태를 조회한다.
   /// PC가 자동으로 못 푸는 왜곡 캡차를 GIF로 올려두면 사람이 보고 답해야 한다.
-  /// 서버가 60초 넘은 row는 상태와 무관하게 none으로 내려주므로(오래된 캡차가
+  /// 서버가 90초 넘은 row는 상태와 무관하게 none으로 내려주므로(오래된 캡차가
   /// 계속 "대기 중"으로 보이는 것 방지), 네트워크 실패 시에도 none으로 폴백한다.
   static Future<CaptchaState> fetchCaptchaState(String deviceId) async {
     try {

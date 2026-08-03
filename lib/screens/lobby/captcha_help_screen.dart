@@ -115,14 +115,16 @@ class _CaptchaHelpScreenState extends State<CaptchaHelpScreen> {
       case CaptchaState.none:
         return _message('대기 중인 캡차가 없습니다');
       case CaptchaState.resolved:
-        return _message(
-          '정답입니다! 캡차가 해결되었습니다',
+        return _buildEndState(
+          deviceId,
+          text: '정답입니다! 캡차가 해결되었습니다',
           icon: Icons.check_circle,
           color: Colors.green,
         );
       case CaptchaState.failed:
-        return _message(
-          '3번 모두 실패했습니다.\n"제어" 탭에서 직접 확인해주세요.',
+        return _buildEndState(
+          deviceId,
+          text: '시간 내에 해결하지 못했습니다.\n"제어" 탭에서 직접 확인해주세요.',
           icon: Icons.error_outline,
           color: Colors.redAccent,
         );
@@ -151,6 +153,39 @@ class _CaptchaHelpScreenState extends State<CaptchaHelpScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  /// resolved/failed 종료 상태 — 마지막으로 시도한 GIF를 계속 보여줘서
+  /// 사용자가 무슨 문구였는지 확인할 수 있게 한다(입력 폼은 숨김).
+  Widget _buildEndState(
+    String deviceId, {
+    required String text,
+    required IconData icon,
+    required Color color,
+  }) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: AspectRatio(
+              aspectRatio: 1,
+              child: Image.network(
+                '${Gateway.captchaGifUrl(deviceId)}?v=$_gifNonce',
+                fit: BoxFit.contain,
+                gaplessPlayback: true,
+                errorBuilder: (_, __, ___) => const Center(child: Text('이미지 로드 실패')),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Icon(icon, size: 40, color: color),
+          const SizedBox(height: 12),
+          Text(text, textAlign: TextAlign.center, style: TextStyle(color: color)),
+        ],
       ),
     );
   }
