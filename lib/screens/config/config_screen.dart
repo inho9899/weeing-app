@@ -2,10 +2,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'package:weeing_app/gateway/gateway.dart';
+import '../../utils/alert_notifications.dart';
 import 'models/device_info.dart';
 import 'widgets/device_row.dart';
 import 'widgets/add_ip_dialog.dart';
@@ -29,8 +29,6 @@ class _ConfigScreenState extends State<ConfigScreen> {
   Map<String, List<Map<String, dynamic>>> _buildSchedules = {};
 
   Timer? _pollTimer;
-  final FlutterLocalNotificationsPlugin _localNotifications =
-      FlutterLocalNotificationsPlugin();
 
   // IPv4 형식 검사: xxx.xxx.xxx.xxx (port는 cloudflare가 서비스명으로 정하므로 안 받음)
   final RegExp _ipRegex = RegExp(
@@ -105,37 +103,14 @@ class _ConfigScreenState extends State<ConfigScreen> {
   }
 
   Future<void> _initNotifications() async {
-    const androidSettings = AndroidInitializationSettings(
-      '@mipmap/ic_launcher',
-    );
-    const iosSettings = DarwinInitializationSettings();
-    const initSettings = InitializationSettings(
-      android: androidSettings,
-      iOS: iosSettings,
-    );
-    await _localNotifications.initialize(initSettings);
+    await AlertNotifications.init();
 
     // FCM은 앱이 포그라운드일 때 시스템 알림 배너를 자동으로 띄워주지 않는다
     // (백그라운드/종료 상태에서만 OS가 대신 표시함). 그래서 포그라운드 수신은
-    // 직접 받아서 로컬 알림으로 띄워줘야 한다.
+    // 직접 받아서 로컬 알림으로 띄워줘야 한다. severity별 채널 분기는
+    // AlertNotifications가 담당 (백그라운드 handler와 동일 로직 공유).
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      final notification = message.notification;
-      if (notification == null) return;
-      _localNotifications.show(
-        notification.hashCode,
-        notification.title,
-        notification.body,
-        const NotificationDetails(
-          android: AndroidNotificationDetails(
-            'alert_channel',
-            'Alert Notifications',
-            channelDescription: 'Notification for device alert',
-            importance: Importance.max,
-            priority: Priority.high,
-          ),
-          iOS: DarwinNotificationDetails(),
-        ),
-      );
+      AlertNotifications.show(message);
     });
   }
 

@@ -7,6 +7,15 @@
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
+    <!-- Android 13+(targetSdk 33+)는 이게 없으면 알림이 조용히 안 뜬다 (POST_NOTIFICATIONS
+         런타임 권한도 별도로 필요 — lib/utils/alert_notifications.dart의 init()에서 요청) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- 배터리 최적화 예외 요청 — 없으면 앱이 백그라운드일 때 Doze/제조사 배터리
+         관리가 data-only FCM 메시지 전달을 지연·차단해서 알람이 포그라운드에서만
+         온다 (런타임 요청은 lib/main.dart의 main()에서). -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <!-- 카메라 / 마이크 (필요 시) -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
