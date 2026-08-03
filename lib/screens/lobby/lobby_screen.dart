@@ -64,8 +64,12 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   Map<String, String> _characterToBuild = {};
   Map<String, String> _buildToCharacter = {};
   String _currentCharacter = '';
+  // _fetchCharacterMapping()이 최소 한 번 끝났는지. _fetchBuildList()가 먼저
+  // 끝나버리면 매핑이 아직 비어있는 걸 "매핑 없음"으로 오판해 raw 빌드로
+  // 기본값을 확정해버리는 문제가 있어서, 매핑 조회가 끝나기 전까진 raw 빌드
+  // 폴백을 보류한다.
+  bool _characterMappingLoaded = false;
 
-  final TextEditingController _commandController = TextEditingController();
   Timer? _pollTimer;      // cycle 폴링 (1초)
   Timer? _timeSyncTimer;  // 시간 동기화 (1분)
   bool _initialStatusFetched = false;
@@ -101,6 +105,14 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       items.add(_currentCharacter);
     }
     return items;
+  }
+
+  /// 실행 중도 아니고 선택도 안 됐을 때(currentMap 비어있음) 보여줄 안내 문구.
+  /// 매핑 조회가 아직 안 끝났으면 성급히 "등록해주세요"를 띄우지 않고 비워둔다.
+  String? get _lobbyHint {
+    if (_currentMap.isNotEmpty) return null;
+    if (!_characterMappingLoaded) return null;
+    return _characterToBuild.isNotEmpty ? '빌드를 선택해주세요' : '빌드를 등록해주세요';
   }
 
   /// 드롭다운 표시 텍스트: "캐릭터명 - 빌드명". 캐릭터로 매핑 안 된 값(raw
@@ -199,7 +211,6 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
     _pollTimer?.cancel();
     _timeSyncTimer?.cancel();
-    _commandController.dispose();
     _cycleCtrl.dispose();
     _hourCtrl.dispose();
     _minCtrl.dispose();
@@ -365,9 +376,6 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
           _builds.contains(_runningBuildFromStatus)) {
         _currentMap = _runningBuildFromStatus!;
       }
-      // 실행 중이 아니면 _resolveCurrentCharacter()가 매핑된 첫 캐릭터로
-      // 기본값을 잡는다 (여기서 raw 빌드로 기본값을 잡으면 매핑 안 된 빌드가
-      // 걸려 "알 수 없음"으로 빠지는 문제가 있었다).
       _resolveCurrentCharacter();
     });
   }
@@ -405,6 +413,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     setState(() {
       _characterToBuild = mapping;
       _buildToCharacter = reverse;
+      _characterMappingLoaded = true;
       _resolveCurrentCharacter();
     });
   }
@@ -414,19 +423,12 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   /// 표시용 캐릭터명을 못 찾았다고 다른 빌드로 덮어써버리면 "실행 중" 표시와
   /// 실제 실행 중인 빌드가 어긋나 Start를 눌렀을 때 엉뚱한 빌드가 재시작될 수 있다.
   ///
-  /// _currentMap이 아직 비어있을 때(앱 진입 직후, 아무 것도 선택/실행 안 됨)만
-  /// 매핑된 첫 캐릭터 → (매핑이 아예 없으면) 첫 빌드 순으로 기본값을 잡는다.
+  /// 자동으로 첫 캐릭터/첫 빌드를 기본 선택하지 않는다 — 실행 중인 빌드가
+  /// 없으면 currentMap을 비워두고, _lobbyHint가 "선택해주세요"/"등록해주세요"
+  /// 안내를 보여준다 (사용자가 직접 고르기 전엔 아무 것도 확정하지 않음).
   void _resolveCurrentCharacter() {
     if (_currentMap.isEmpty) {
-      if (_characterToBuild.isNotEmpty) {
-        _currentCharacter = _characterToBuild.keys.first;
-        _currentMap = _characterToBuild[_currentCharacter]!;
-      } else if (_builds.isNotEmpty) {
-        _currentCharacter = _builds.first;
-        _currentMap = _builds.first;
-      } else {
-        _currentCharacter = '';
-      }
+      _currentCharacter = '';
       return;
     }
 
@@ -495,15 +497,6 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   Future<void> _handlePause() async {
     await _api.pause();
     _fetchCycleAndBuild();
-  }
-
-  Future<void> _handleSend() async {
-    final msg = _commandController.text.trim();
-    await _api.sendInputSequence(msg);
-  }
-
-  Future<void> _handleConvert() async {
-    await _api.convertMode();
   }
 
   void _onHourChanged(int newVal) {
@@ -765,6 +758,137 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   // UI
   // =========================================================
 
+  Widget _buildToggleButton() {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: GestureDetector(
+        onTap: () {
+          setState(() {
+            _trackpadMode = !_trackpadMode;
+            _streamScale = 1.0;
+            _streamOffset = Offset.zero;
+          });
+          widget.onTrackpadModeChanged?.call(_trackpadMode);
+
+          if (!_trackpadMode) {
+            _initialStatusFetched = false;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (_cycleCtrl.hasClients) {
+                _cycleCtrl.jumpToItem(_cycle);
+              }
+              if (_hourCtrl.hasClients) {
+                _hourCtrl.jumpToItem(_startHour);
+              }
+              if (_minCtrl.hasClients) {
+                _minCtrl.jumpToItem(_startMinute);
+              }
+            });
+          }
+        },
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: _trackpadMode ? Colors.blueAccent : Colors.pinkAccent,
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(
+            Icons.error_outline,
+            color: Colors.white,
+            size: 30,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 기본(대기) 화면 — 콘텐츠가 화면보다 길어질 수 있으니 스크롤 가능하게 둔다.
+  Widget _buildNormalLayout() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          LobbyHeader(hostText: _hostText, onInfoTap: _openInfoSheet),
+          const SizedBox(height: 8),
+          LobbyWebRTCView(
+            renderer: _renderer,
+            connected: _webrtcConnected,
+            scale: _streamScale,
+            offset: _streamOffset,
+          ),
+          const SizedBox(height: 16),
+          LobbyControls(
+            builds: _characterDropdownItems,
+            currentMap: _currentCharacter,
+            itemLabels: _characterDropdownLabels,
+            hint: _lobbyHint,
+            onMapChanged: (v) {
+              if (v == null) return;
+              setState(() {
+                _currentCharacter = v;
+                // 매핑이 있으면 캐릭터명 → 빌드명 resolve, 없으면
+                // 드롭다운 값 자체가 이미 raw 빌드명이다.
+                _currentMap = _characterToBuild[v] ?? v;
+              });
+            },
+            onStart: _handleStart,
+            onPause: _handlePause,
+            cycle: CycleControl(
+              value: _cycle,
+              controller: _cycleCtrl,
+              onChanged: (v) {
+                setState(() => _cycle = v);
+                _api.setCycle(v);
+              },
+            ),
+            startTime: StartTimeControl(
+              hour: _startHour,
+              minute: _startMinute,
+              hourController: _hourCtrl,
+              minuteController: _minCtrl,
+              onHourChanged: _onHourChanged,
+              onMinuteChanged: _onMinuteChanged,
+            ),
+          ),
+          const SizedBox(height: 24),
+          _buildToggleButton(),
+        ],
+      ),
+    );
+  }
+
+  /// 트랙패드 모드 화면 — 화면 전체가 드래그로 마우스를 움직이는 영역이라
+  /// 페이지 자체를 스크롤시키면 제스처가 충돌한다. 그래서 스크롤뷰를 쓰지
+  /// 않고, 트랙패드 영역(Expanded)이 남은 세로 공간에 딱 맞게 채우도록 해
+  /// 화면 크기와 무관하게 항상 한 화면 안에 들어오게 한다.
+  Widget _buildTrackpadLayout() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          LobbyHeader(hostText: _hostText, onInfoTap: _openInfoSheet),
+          const SizedBox(height: 8),
+          _buildTouchableStreamView(),
+          const SizedBox(height: 16),
+          Expanded(
+            child: MouseMode(
+              ip: widget.ip,
+              initialScale: _streamScale,
+              initialOffset: _streamOffset,
+              streamViewSize: _streamViewSize,
+              onScaleChanged: (s) => setState(() => _streamScale = s),
+              onOffsetChanged: (o) => setState(() => _streamOffset = o),
+              needsAttention: widget.captchaNeedsAttention,
+            ),
+          ),
+          const SizedBox(height: 24),
+          _buildToggleButton(),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     const bgColor = Color(0xFFF3F3F5);
@@ -775,116 +899,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 480),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  LobbyHeader(
-                    hostText: _hostText,
-                    onInfoTap: _openInfoSheet,
-                  ),
-                  const SizedBox(height: 8),
-                  _trackpadMode
-                      ? _buildTouchableStreamView()
-                      : LobbyWebRTCView(
-                          renderer: _renderer,
-                          connected: _webrtcConnected,
-                          scale: _streamScale,
-                          offset: _streamOffset,
-                        ),
-                  const SizedBox(height: 16),
-                  if (!_trackpadMode)
-                    LobbyControls(
-                      builds: _characterDropdownItems,
-                      currentMap: _currentCharacter,
-                      itemLabels: _characterDropdownLabels,
-                      onMapChanged: (v) {
-                        if (v == null) return;
-                        setState(() {
-                          _currentCharacter = v;
-                          // 매핑이 있으면 캐릭터명 → 빌드명 resolve, 없으면
-                          // 드롭다운 값 자체가 이미 raw 빌드명이다.
-                          _currentMap = _characterToBuild[v] ?? v;
-                        });
-                      },
-                      onStart: _handleStart,
-                      onPause: _handlePause,
-                      cycle: CycleControl(
-                        value: _cycle,
-                        controller: _cycleCtrl,
-                        onChanged: (v) {
-                          setState(() => _cycle = v);
-                          _api.setCycle(v);
-                        },
-                      ),
-                      startTime: StartTimeControl(
-                        hour: _startHour,
-                        minute: _startMinute,
-                        hourController: _hourCtrl,
-                        minuteController: _minCtrl,
-                        onHourChanged: _onHourChanged,
-                        onMinuteChanged: _onMinuteChanged,
-                      ),
-                    )
-                  else
-                    MouseMode(
-                      ip: widget.ip,
-                      initialScale: _streamScale,
-                      initialOffset: _streamOffset,
-                      streamViewSize: _streamViewSize,
-                      onScaleChanged: (s) => setState(() => _streamScale = s),
-                      onOffsetChanged: (o) => setState(() => _streamOffset = o),
-                      commandController: _commandController,
-                      onSend: _handleSend,
-                      onConvertMode: _handleConvert,
-                      needsAttention: widget.captchaNeedsAttention,
-                    ),
-                  const SizedBox(height: 24),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: GestureDetector(
-                      onTap: () {
-                        setState(() {
-                          _trackpadMode = !_trackpadMode;
-                          _streamScale = 1.0;
-                          _streamOffset = Offset.zero;
-                        });
-                        widget.onTrackpadModeChanged?.call(_trackpadMode);
-
-                        if (!_trackpadMode) {
-                          _initialStatusFetched = false;
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (_cycleCtrl.hasClients) {
-                              _cycleCtrl.jumpToItem(_cycle);
-                            }
-                            if (_hourCtrl.hasClients) {
-                              _hourCtrl.jumpToItem(_startHour);
-                            }
-                            if (_minCtrl.hasClients) {
-                              _minCtrl.jumpToItem(_startMinute);
-                            }
-                          });
-                        }
-                      },
-                      child: Container(
-                        padding: const EdgeInsets.all(14),
-                        decoration: BoxDecoration(
-                          color:
-                              _trackpadMode ? Colors.blueAccent : Colors.pinkAccent,
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(
-                          Icons.error_outline,
-                          color: Colors.white,
-                          size: 30,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            child: _trackpadMode ? _buildTrackpadLayout() : _buildNormalLayout(),
           ),
         ),
       ),

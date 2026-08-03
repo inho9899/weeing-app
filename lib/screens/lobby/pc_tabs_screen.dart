@@ -20,14 +20,29 @@ class PcTabsScreen extends StatefulWidget {
 }
 
 class _PcTabsScreenState extends State<PcTabsScreen> {
+  static const _redWindow = Duration(seconds: 60);
+
   bool _needsAttention = false;
+  DateTime? _captchaOccurredAt;
   bool _showTabBar = false; // LobbyScreen의 트랙패드 모드일 때만 true
 
-  void _onCaptchaStateChanged(CaptchaState state) {
-    final needsAttention = state != CaptchaState.none;
-    if (needsAttention != _needsAttention) {
-      setState(() => _needsAttention = needsAttention);
-    }
+  void _onCaptchaStatusChanged(CaptchaStatus status) {
+    final needsAttention = status.state != CaptchaState.none;
+    setState(() {
+      _needsAttention = needsAttention;
+      _captchaOccurredAt = status.occurredAt;
+    });
+  }
+
+  /// 캡차 발생 후 60초까지는 빨간불(응답 시급), 그 이후엔 검은불(확인은 필요하나 급하진 않음).
+  /// 발생 시각을 알 수 없으면(구버전 서버 응답 등) 급한 쪽으로 오판하지 않게 검은불로 둔다.
+  Color? get _badgeColor {
+    if (!_needsAttention) return null;
+    final occurredAt = _captchaOccurredAt;
+    if (occurredAt == null) return Colors.black;
+    return DateTime.now().difference(occurredAt) < _redWindow
+        ? Colors.red
+        : Colors.black;
   }
 
   void _onTrackpadModeChanged(bool trackpadMode) {
@@ -43,6 +58,22 @@ class _PcTabsScreenState extends State<PcTabsScreen> {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('PC 제어'),
+          actions: [
+            if (_badgeColor != null)
+              Padding(
+                padding: const EdgeInsets.only(right: 16),
+                child: Center(
+                  child: Container(
+                    width: 10,
+                    height: 10,
+                    decoration: BoxDecoration(
+                      color: _badgeColor,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              ),
+          ],
           bottom: _showTabBar
               ? const TabBar(
                   tabs: [
@@ -63,8 +94,9 @@ class _PcTabsScreenState extends State<PcTabsScreen> {
               onTrackpadModeChanged: _onTrackpadModeChanged,
             ),
             CaptchaHelpScreen(
+              ip: widget.ip,
               deviceId: widget.deviceId,
-              onStateChanged: _onCaptchaStateChanged,
+              onStatusChanged: _onCaptchaStatusChanged,
             ),
           ],
         ),

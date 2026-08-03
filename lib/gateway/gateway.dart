@@ -21,6 +21,17 @@ CaptchaState _parseCaptchaState(String? raw) {
   }
 }
 
+/// 캡차 상태 + 이 캡차가 처음 발생한 시각.
+/// occurredAt은 answered/resolved/failed로 상태가 바뀌어도 그대로 유지되므로
+/// (서버 first_ts, [db.py] upsert_request 참고), "발생 후 얼마나 지났는지"
+/// 판단 기준으로 쓸 수 있다 — PcTabsScreen의 빨간불/검은불 배지가 이걸 사용한다.
+class CaptchaStatus {
+  final CaptchaState state;
+  final DateTime? occurredAt;
+
+  const CaptchaStatus(this.state, this.occurredAt);
+}
+
 /// WEEING 앱의 단일 API 관문.
 ///
 /// 앱의 모든 원격 호출은 반드시 이 Gateway 를 거쳐 cloudflare 게이트웨이
@@ -251,19 +262,26 @@ class Gateway {
 
   /// 이 device의 캡차 도움(typeliecheck) 진행 상태를 조회한다.
   /// PC가 자동으로 못 푸는 왜곡 캡차를 GIF로 올려두면 사람이 보고 답해야 한다.
-  /// 서버가 90초 넘은 row는 상태와 무관하게 none으로 내려주므로(오래된 캡차가
-  /// 계속 "대기 중"으로 보이는 것 방지), 네트워크 실패 시에도 none으로 폴백한다.
-  static Future<CaptchaState> fetchCaptchaState(String deviceId) async {
+  /// 서버는 시간이 아무리 지나도 마지막 상태를 그대로 내려준다(오래됐다고
+  /// none으로 감추지 않음) — "얼마나 지났는지"는 occurredAt으로 앱이 직접
+  /// 판단해 배지 색으로만 표현한다. 네트워크 실패 시에는 none으로 폴백한다.
+  static Future<CaptchaStatus> fetchCaptchaState(String deviceId) async {
+    const none = CaptchaStatus(CaptchaState.none, null);
     try {
       final res = await http.get(
         Uri.parse('$cloudflareBase/captcha/pending/$deviceId'),
       );
-      if (res.statusCode != 200) return CaptchaState.none;
+      if (res.statusCode != 200) return none;
       final resp = unwrap(res);
-      if (resp is! Map) return CaptchaState.none;
-      return _parseCaptchaState(resp['state'] as String?);
+      if (resp is! Map) return none;
+      final state = _parseCaptchaState(resp['state'] as String?);
+      final firstTs = (resp['first_ts'] as num?)?.toDouble();
+      final occurredAt = firstTs == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch((firstTs * 1000).round());
+      return CaptchaStatus(state, occurredAt);
     } catch (_) {
-      return CaptchaState.none;
+      return none;
     }
   }
 

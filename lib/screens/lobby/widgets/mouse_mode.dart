@@ -14,9 +14,6 @@ class MouseMode extends StatefulWidget {
   final Function(Offset) onOffsetChanged;
   final double initialScale;
   final Offset initialOffset;
-  final TextEditingController commandController;
-  final VoidCallback onSend;
-  final VoidCallback onConvertMode;
 
   /// 스트림 뷰 사이즈 (경계 계산용)
   final Size? streamViewSize;
@@ -31,9 +28,6 @@ class MouseMode extends StatefulWidget {
     required this.onOffsetChanged,
     this.initialScale = 1.0,
     this.initialOffset = Offset.zero,
-    required this.commandController,
-    required this.onSend,
-    required this.onConvertMode,
     this.streamViewSize,
     this.needsAttention = false,
   });
@@ -180,7 +174,6 @@ class _MouseModeState extends State<MouseMode> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 260,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
@@ -309,76 +302,7 @@ class _MouseModeState extends State<MouseMode> {
               ),
             ),
           ),
-          // 하단 입력 창 및 버튼
-          Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: Column(
-              children: [
-                TextField(
-                  controller: widget.commandController,
-                  decoration: InputDecoration(
-                    filled: true,
-                    fillColor: Colors.grey[100],
-                    hintText: '메시지 입력...',
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(6),
-                      borderSide: BorderSide.none,
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 10,
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _greyButton(
-                        label: 'Send',
-                        onTap: widget.onSend,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _greyButton(
-                        label: '한/영 전환',
-                        onTap: widget.onConvertMode,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
         ],
-      ),
-    );
-  }
-
-  Widget _greyButton({
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return SizedBox(
-      height: 40,
-      child: ElevatedButton(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF757575),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(6),
-          ),
-          padding: EdgeInsets.zero,
-        ),
-        onPressed: onTap,
-        child: Text(
-          label,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
       ),
     );
   }
