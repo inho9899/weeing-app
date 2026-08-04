@@ -5,14 +5,11 @@ import 'package:weeing_app/gateway/gateway.dart';
 import 'services/lobby_api_service.dart';
 
 /// PC(typeliecheck)가 자동으로 못 푸는 왜곡 캡차를 GIF로 올려두면,
-/// 여기서 보고 답을 입력해 제출한다. PC는 그 답을 폴링해서 받아 직접 타이핑한다.
+/// 여기서 보고 답을 입력해 제출한다. 제출한 답은 대상 PC의 subAction
+/// (`/input/sequence`)으로 직행해 그대로 타이핑된다 — [_submit] 참고.
 ///
 /// 캡차가 실제로 진행 중일 때(pending/processing)만 입력 UI를 보여준다 —
 /// none/resolved/failed일 땐 안내 메시지만 표시하고 입력창 자체를 숨긴다.
-///
-/// 하단의 메시지 입력(Send)은 캡차와 무관한 범용 입력 기능이지만, 트랙패드
-/// 모드 화면 공간을 넓히기 위해 이 탭으로 옮겨왔다. 캡차 발생 후 60초가
-/// 지나면(AppBar 배지가 검은불로 바뀌는 시점) 함께 비활성화된다.
 class CaptchaHelpScreen extends StatefulWidget {
   final String ip;
   final String? deviceId;
@@ -36,27 +33,14 @@ class _CaptchaHelpScreenState extends State<CaptchaHelpScreen> {
   static const _normalInterval = Duration(seconds: 2);
   static const _fastInterval = Duration(seconds: 1);
   static const _fastBurstTicks = 8; // 제출 직후 이 횟수만큼 빠르게(1초) 재폴링
-  // PcTabsScreen AppBar 배지의 빨간불/검은불 기준과 동일 — 그 시간이 지나면
-  // 더 이상 급한 상황이 아니라고 보고 메시지 입력도 함께 잠근다.
-  static const _messageInputWindow = Duration(seconds: 60);
 
   late final LobbyApiService _api;
   Timer? _pollTimer;
   int _fastTicksLeft = 0;
   CaptchaState _state = CaptchaState.none;
-  DateTime? _occurredAt;
   bool _submitting = false;
   int _gifNonce = 0; // 폴링마다 바꿔서 Image.network가 새로 받아오게 함
   final TextEditingController _answerController = TextEditingController();
-  final TextEditingController _commandController = TextEditingController();
-
-  /// 캡차가 발생한 적이 없으면(occurredAt 없음) 제약 없이 사용 가능,
-  /// 발생했다면 60초가 지나기 전까지만 활성화한다.
-  bool get _messageInputEnabled {
-    final occurredAt = _occurredAt;
-    if (occurredAt == null) return true;
-    return DateTime.now().difference(occurredAt) < _messageInputWindow;
-  }
 
   @override
   void initState() {
@@ -87,24 +71,7 @@ class _CaptchaHelpScreenState extends State<CaptchaHelpScreen> {
   void dispose() {
     _pollTimer?.cancel();
     _answerController.dispose();
-    _commandController.dispose();
     super.dispose();
-  }
-
-  Future<void> _handleSend() async {
-    final msg = _commandController.text.trim();
-    if (msg.isEmpty) return;
-
-    final error = await _api.sendInputSequence(msg);
-    if (!mounted) return;
-
-    final messenger = ScaffoldMessenger.of(context);
-    if (error == null) {
-      _commandController.clear();
-      messenger.showSnackBar(const SnackBar(content: Text('메시지를 PC에 입력했습니다')));
-    } else {
-      messenger.showSnackBar(SnackBar(content: Text(error)));
-    }
   }
 
   Future<void> _poll() async {
@@ -115,7 +82,6 @@ class _CaptchaHelpScreenState extends State<CaptchaHelpScreen> {
     widget.onStatusChanged?.call(status);
     setState(() {
       _state = status.state;
-      _occurredAt = status.occurredAt;
       _gifNonce++;
     });
   }
@@ -154,18 +120,9 @@ class _CaptchaHelpScreenState extends State<CaptchaHelpScreen> {
   Widget build(BuildContext context) {
     // PcTabsScreen의 Scaffold(TabBarView)는 SafeArea를 감싸주지 않는다 —
     // LobbyScreen(제어 탭)은 자체 Scaffold+SafeArea로 하단 시스템 바를
-    // 피하지만, 이 탭은 없어서 하단 메시지 입력 바가 시스템 바 아래로
-    // 잡힐 수 있었다. 여기서 직접 SafeArea로 감싼다.
-    return SafeArea(
-      top: false,
-      child: Column(
-        children: [
-          Expanded(child: _buildCaptchaArea()),
-          const Divider(height: 1),
-          _buildMessageInput(),
-        ],
-      ),
-    );
+    // 피하지만, 이 탭은 없어서 내용이 시스템 바 아래로 깔릴 수 있다.
+    // 여기서 직접 SafeArea로 감싼다.
+    return SafeArea(top: false, child: _buildCaptchaArea());
   }
 
   Widget _buildCaptchaArea() {
@@ -198,67 +155,6 @@ class _CaptchaHelpScreenState extends State<CaptchaHelpScreen> {
       case CaptchaState.pending:
         return _buildForm(deviceId, processing: false);
     }
-  }
-
-  /// 캡차와 무관한 범용 메시지 입력(Send) — 트랙패드 모드에서 옮겨와 항상
-  /// 하단에 노출하되, 캡차 발생 후 60초(배지가 검은불로 바뀌는 시점)가
-  /// 지나면 더 이상 급한 상황이 아니라고 보고 비활성화한다.
-  Widget _buildMessageInput() {
-    final enabled = _messageInputEnabled;
-    return Padding(
-      padding: const EdgeInsets.all(12.0),
-      child: Column(
-        children: [
-          TextField(
-            controller: _commandController,
-            enabled: enabled,
-            decoration: InputDecoration(
-              filled: true,
-              fillColor: Colors.grey[100],
-              hintText: '메시지 입력...',
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(6),
-                borderSide: BorderSide.none,
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 10,
-              ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: _greyButton(
-              label: 'Send',
-              onTap: enabled ? _handleSend : null,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _greyButton({required String label, required VoidCallback? onTap}) {
-    return SizedBox(
-      height: 40,
-      child: ElevatedButton(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: const Color(0xFF757575),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
-          padding: EdgeInsets.zero,
-        ),
-        onPressed: onTap,
-        child: Text(
-          label,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 14,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _message(String text, {IconData? icon, Color? color}) {
