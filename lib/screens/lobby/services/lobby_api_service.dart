@@ -129,14 +129,23 @@ class LobbyApiService {
 
   // ── subAction ──
 
-  Future<bool> sendInputSequence(String msg) async {
-    if (msg.isEmpty) return false;
+  /// 문자열을 대상 PC에 그대로 타이핑시킨다 (subAction `/input/sequence`).
+  ///
+  /// 성공하면 null, 실패하면 사용자에게 보여줄 메시지를 반환한다.
+  ///
+  /// subAction 은 차단(러너 실행 중)이든 내부 예외(입력모드 전환 실패 등)든
+  /// **전부 HTTP 200** 으로 응답하고 본문 `resp` 로만 성패를 구분한다. 따라서
+  /// 상태코드만 보면 항상 성공으로 읽혀 실패가 조용히 묻힌다 — 본문까지 확인한다.
+  Future<String?> sendInputSequence(String msg) async {
+    if (msg.isEmpty) return '입력할 내용이 없습니다';
     try {
       final api = 'subaction/input/sequence/${Uri.encodeComponent(msg)}';
       final res = await Gateway.call(ip, api, method: 'POST');
-      return res.statusCode == 200;
+      if (res.statusCode != 200) return '전송 실패 (HTTP ${res.statusCode})';
+      if (Gateway.unwrap(res) == 0) return null;
+      return Gateway.message(res) ?? 'PC가 입력을 처리하지 못했습니다';
     } catch (_) {
-      return false;
+      return 'PC에 연결하지 못했습니다';
     }
   }
 

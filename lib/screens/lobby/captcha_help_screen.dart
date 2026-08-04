@@ -93,7 +93,18 @@ class _CaptchaHelpScreenState extends State<CaptchaHelpScreen> {
 
   Future<void> _handleSend() async {
     final msg = _commandController.text.trim();
-    await _api.sendInputSequence(msg);
+    if (msg.isEmpty) return;
+
+    final error = await _api.sendInputSequence(msg);
+    if (!mounted) return;
+
+    final messenger = ScaffoldMessenger.of(context);
+    if (error == null) {
+      _commandController.clear();
+      messenger.showSnackBar(const SnackBar(content: Text('메시지를 PC에 입력했습니다')));
+    } else {
+      messenger.showSnackBar(SnackBar(content: Text(error)));
+    }
   }
 
   Future<void> _poll() async {
@@ -109,28 +120,33 @@ class _CaptchaHelpScreenState extends State<CaptchaHelpScreen> {
     });
   }
 
+  /// 캡차 답을 PC에 직접 타이핑시킨다 (subAction `/input/sequence`).
+  ///
+  /// 예전엔 cloudfare `/captcha/answer` 에 답을 올려두고 PC가 폴링해 가져가는
+  /// 방식이었는데, PC 쪽 handle_type()이 GIF만 올리고 바로 wait 로 빠지도록
+  /// 바뀌면서 그 답을 가져가는 주체가 없어졌다. 게다가 cloudfare 에 답을 올리면
+  /// 서버 상태가 answered -> 앱에서 "processing" 으로 읽혀 입력폼이 잠기는데,
+  /// resolve/fail 을 보고하는 곳도 없어 영원히 안 풀린다. 그래서 중계를 거치지
+  /// 않고 대상 PC 로 직행시킨다.
   Future<void> _submit() async {
-    final deviceId = widget.deviceId;
-    if (deviceId == null) return;
     final answer = _answerController.text.trim();
     if (answer.isEmpty) return;
 
     setState(() => _submitting = true);
-    final ok = await Gateway.submitCaptchaAnswer(deviceId, answer);
+    final error = await _api.sendInputSequence(answer);
     if (!mounted) return;
     setState(() => _submitting = false);
 
     final messenger = ScaffoldMessenger.of(context);
-    if (ok) {
+    if (error == null) {
       _answerController.clear();
-      messenger.showSnackBar(const SnackBar(content: Text('답을 전송했습니다, 확인 중...')));
-      // 오답이면 PC가 곧 다음 시도 GIF를 새로 올리고, 정답/기회소진이면 종료
-      // 상태로 바뀐다 — 이 전환을 빨리 잡기 위해 잠깐 빠르게 재폴링한다.
+      messenger.showSnackBar(const SnackBar(content: Text('답을 PC에 입력했습니다')));
+      // 입력 후 캡차가 닫혔는지(=새 상태) 빨리 잡기 위해 잠깐 빠르게 재폴링한다.
       _fastTicksLeft = _fastBurstTicks;
       _startTimer(_fastInterval);
       _poll();
     } else {
-      messenger.showSnackBar(const SnackBar(content: Text('전송 실패 - 다시 시도해주세요')));
+      messenger.showSnackBar(SnackBar(content: Text(error)));
     }
   }
 

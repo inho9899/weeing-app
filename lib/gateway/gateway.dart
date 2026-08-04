@@ -289,7 +289,16 @@ class Gateway {
   static String captchaGifUrl(String deviceId) =>
       '$cloudflareBase/captcha/gif/$deviceId';
 
-  /// 사람이 입력한 캡차 답을 제출한다. PC가 이 답을 폴링해서 받아 타이핑한다.
+  /// 사람이 입력한 캡차 답을 cloudfare 에 올려둔다 (PC가 폴링해 가져가는 방식).
+  ///
+  /// 현재 미사용. PC 쪽 handle_type() 이 GIF만 올리고 바로 wait 로 빠지도록
+  /// 바뀌면서 이 답을 가져가는 주체가 없어졌고, 답을 올리면 서버 상태가
+  /// answered -> 앱에서 "processing" 으로 읽혀 입력폼이 잠기는데 resolve/fail 을
+  /// 보고하는 곳이 없어 영원히 안 풀린다. 그래서 캡차 답 제출은
+  /// LobbyApiService.sendInputSequence() 로 대상 PC 에 직행시킨다
+  /// (captcha_help_screen.dart `_submit()` 참고).
+  ///
+  /// PC 가 다시 폴링 방식으로 돌아가면 그때 이 경로를 되살리면 된다.
   static Future<bool> submitCaptchaAnswer(String deviceId, String answer) async {
     try {
       final res = await http.post(
