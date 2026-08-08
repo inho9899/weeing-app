@@ -8,8 +8,8 @@ import 'services/lobby_api_service.dart';
 /// 여기서 보고 답을 입력해 제출한다. 제출한 답은 대상 PC의 subAction
 /// (`/input/sequence`)으로 직행해 그대로 타이핑된다 — [_submit] 참고.
 ///
-/// 캡차가 실제로 진행 중일 때(pending/processing)만 입력 UI를 보여준다 —
-/// none/resolved/failed일 땐 안내 메시지만 표시하고 입력창 자체를 숨긴다.
+/// 대기 중인 캡차가 있을 때(pending)만 입력 UI를 보여준다 — none일 땐 안내
+/// 메시지만 표시하고 입력창 자체를 숨긴다.
 class CaptchaHelpScreen extends StatefulWidget {
   final String ip;
   final String? deviceId;
@@ -90,10 +90,8 @@ class _CaptchaHelpScreenState extends State<CaptchaHelpScreen> {
   ///
   /// 예전엔 cloudfare `/captcha/answer` 에 답을 올려두고 PC가 폴링해 가져가는
   /// 방식이었는데, PC 쪽 handle_type()이 GIF만 올리고 바로 wait 로 빠지도록
-  /// 바뀌면서 그 답을 가져가는 주체가 없어졌다. 게다가 cloudfare 에 답을 올리면
-  /// 서버 상태가 answered -> 앱에서 "processing" 으로 읽혀 입력폼이 잠기는데,
-  /// resolve/fail 을 보고하는 곳도 없어 영원히 안 풀린다. 그래서 중계를 거치지
-  /// 않고 대상 PC 로 직행시킨다.
+  /// 바뀌면서 그 답을 가져가는 주체가 없어졌다. 그래서 중계를 거치지 않고
+  /// 대상 PC 로 직행시킨다 (서버의 답 중계 경로는 제거됨).
   Future<void> _submit() async {
     final answer = _answerController.text.trim();
     if (answer.isEmpty) return;
@@ -136,90 +134,32 @@ class _CaptchaHelpScreenState extends State<CaptchaHelpScreen> {
     switch (_state) {
       case CaptchaState.none:
         return _message('대기 중인 캡차가 없습니다');
-      case CaptchaState.resolved:
-        return _buildEndState(
-          deviceId,
-          text: '정답입니다! 캡차가 해결되었습니다',
-          icon: Icons.check_circle,
-          color: Colors.green,
-        );
-      case CaptchaState.failed:
-        return _buildEndState(
-          deviceId,
-          text: '시간 내에 해결하지 못했습니다.\n"제어" 탭에서 직접 확인해주세요.',
-          icon: Icons.error_outline,
-          color: Colors.redAccent,
-        );
-      case CaptchaState.processing:
-        return _buildForm(deviceId, processing: true);
       case CaptchaState.pending:
-        return _buildForm(deviceId, processing: false);
+        return _buildForm(deviceId);
     }
   }
 
-  Widget _message(String text, {IconData? icon, Color? color}) {
+  Widget _message(String text) {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (icon != null) ...[
-              Icon(icon, size: 40, color: color),
-              const SizedBox(height: 12),
-            ],
-            Text(
-              text,
-              textAlign: TextAlign.center,
-              style: TextStyle(color: color ?? Colors.grey),
-            ),
-          ],
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Colors.grey),
         ),
       ),
     );
   }
 
-  /// resolved/failed 종료 상태 — 마지막으로 시도한 GIF를 계속 보여줘서
-  /// 사용자가 무슨 문구였는지 확인할 수 있게 한다(입력 폼은 숨김).
-  Widget _buildEndState(
-    String deviceId, {
-    required String text,
-    required IconData icon,
-    required Color color,
-  }) {
+  Widget _buildForm(String deviceId) {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-          ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: AspectRatio(
-              aspectRatio: 1,
-              child: Image.network(
-                '${Gateway.captchaGifUrl(deviceId)}?v=$_gifNonce',
-                fit: BoxFit.contain,
-                gaplessPlayback: true,
-                errorBuilder: (_, __, ___) => const Center(child: Text('이미지 로드 실패')),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-          Icon(icon, size: 40, color: color),
-          const SizedBox(height: 12),
-          Text(text, textAlign: TextAlign.center, style: TextStyle(color: color)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildForm(String deviceId, {required bool processing}) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          Text(
-            processing ? '답을 확인하는 중입니다...' : '아래 이미지 속 문구를 보고 답을 입력하세요',
-            style: const TextStyle(fontWeight: FontWeight.w500),
+          const Text(
+            '아래 이미지 속 문구를 보고 답을 입력하세요',
+            style: TextStyle(fontWeight: FontWeight.w500),
           ),
           const SizedBox(height: 12),
           // 캡차 다이얼로그는 화면 해상도와 무관한 고정 픽셀 크기라 항상 정사각형에
@@ -240,7 +180,6 @@ class _CaptchaHelpScreenState extends State<CaptchaHelpScreen> {
           const SizedBox(height: 16),
           TextField(
             controller: _answerController,
-            enabled: !processing,
             decoration: const InputDecoration(
               labelText: '답',
               border: OutlineInputBorder(),
@@ -251,8 +190,8 @@ class _CaptchaHelpScreenState extends State<CaptchaHelpScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: (processing || _submitting) ? null : _submit,
-              child: (_submitting || processing)
+              onPressed: _submitting ? null : _submit,
+              child: _submitting
                   ? const SizedBox(
                       width: 20,
                       height: 20,
