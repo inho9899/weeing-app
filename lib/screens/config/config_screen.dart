@@ -6,6 +6,7 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'package:weeing_app/gateway/gateway.dart';
 import '../../utils/alert_notifications.dart';
+import '../setup/server_setup_screen.dart';
 import 'models/device_info.dart';
 import 'widgets/device_row.dart';
 import 'widgets/add_ip_dialog.dart';
@@ -307,6 +308,26 @@ class _ConfigScreenState extends State<ConfigScreen> {
     }
   }
 
+  /// 서버 주소 변경 화면. 주소가 바뀌면(true) 로컬 캐시가 비워진 상태이므로
+  /// 기기 목록과 매핑·스케줄을 새 서버 기준으로 다시 읽어온다.
+  Future<void> _openServerSetupScreen() async {
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => ServerSetupScreen(currentBase: Gateway.cloudflareBase),
+      ),
+    );
+    if (changed != true || !mounted) return;
+
+    setState(() {
+      _devices.clear();
+      _buildMappings = {};
+      _buildSchedules = {};
+    });
+    await _loadDevices();
+    await _bootstrapBuildMappings();
+    await _bootstrapSchedules();
+  }
+
   Future<void> _handleAddIp() async {
     final result = await showAddIpDialog(context, _ipRegex);
     if (result == null) return;
@@ -524,6 +545,11 @@ class _ConfigScreenState extends State<ConfigScreen> {
         scrolledUnderElevation: 0.5,
         centerTitle: false,
         actions: [
+          IconButton(
+            onPressed: _openServerSetupScreen,
+            icon: const Icon(Icons.dns_outlined, size: 20),
+            tooltip: '서버 주소',
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 12.0),
             child: Row(

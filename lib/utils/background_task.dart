@@ -59,6 +59,17 @@ bool isRedStatus(Map<String, double> metrics) {
 
 Future<void> runBackgroundDeviceCheck() async {
   print('[BG] device check start');
+
+  // 이 함수는 workmanager 의 별도 isolate 에서 돌기 때문에 main() 이 세팅해둔
+  // Gateway 주소를 볼 수 없다 (isolate 는 상태를 공유하지 않는다). 여기서 직접
+  // 올리지 않으면 Gateway.call 이 StateError 로 죽는데, 아래 try/catch 에
+  // 삼켜져서 "포그라운드는 되는데 백그라운드 체크만 조용히 아무 것도 안 함"으로
+  // 보인다.
+  if (await Gateway.ensureLoaded() == null) {
+    print('[BG] gateway not configured, skip');
+    return;
+  }
+
   final prefs = await SharedPreferences.getInstance();
   final deviceList = await _loadDeviceIps(prefs);
   bool hasRed = false;

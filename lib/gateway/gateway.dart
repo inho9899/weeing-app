@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// 캡차 도움(typeliecheck) 진행 상태.
 /// none: 대기 중인 캡차 없음. pending: 답 입력 대기.
@@ -25,12 +26,16 @@ class CaptchaStatus {
 
 /// WEEING 앱의 단일 API 관문.
 ///
-/// 앱의 모든 원격 호출은 반드시 이 Gateway 를 거쳐 cloudflare 게이트웨이
-/// (api.nongameanbun.xyz) 의 /msa/proxy 로 전달된다. cloudflare 는 {ip, api} 를 받아
-/// 대상 머신(ip)의 해당 MSA 서비스로 요청을 프록시한다.
+/// 앱의 모든 원격 호출은 반드시 이 Gateway 를 거쳐 cloudflare 게이트웨이의
+/// /msa/proxy 로 전달된다. cloudflare 는 {ip, api} 를 받아 대상 머신(ip)의 해당
+/// MSA 서비스로 요청을 프록시한다.
 ///
-///   app → https://api.nongameanbun.xyz/msa/proxy  `{ ip, api: "{service}/{path}" }`
+///   app → {게이트웨이}/msa/proxy  `{ ip, api: "{service}/{path}" }`
 ///       → `http://{ip}:{servicePort}/{path}`
+///
+/// 게이트웨이 주소는 사용자마다 다르다 — 각자 자기 weeing-proxy 를 자기 도메인에
+/// 띄워 쓰기 때문이다. 그래서 코드에 박지 않고 첫 실행 때 입력받아
+/// SharedPreferences 에 저장하고, 여기서 읽어 쓴다([ensureLoaded] 참고).
 ///
 /// SoT 는 msaInstaller 의 gateway.py 다. api 의 첫 세그먼트(서비스명)는
 /// cloudflare .env 의 `{service}_API_PORT` 로 포트가 해석된다.
@@ -38,8 +43,85 @@ class CaptchaStatus {
 class Gateway {
   Gateway._();
 
-  /// cloudflare 게이트웨이 도메인. 모든 API 는 여기를 반드시 거친다.
-  static const String cloudflareBase = 'https://api.nongameanbun.xyz';
+  /// 게이트웨이 주소를 저장하는 SharedPreferences 키.
+  static const String _prefsKey = 'cloudflare_api_url';
+
+  /// 메모리에 올려둔 게이트웨이 주소. [ensureLoaded] 가 채운다.
+  static String? _base;
+
+  /// 저장된 주소를 메모리로 올린다 (멱등).
+  ///
+  /// **isolate 마다 따로 불러야 한다.** FCM 백그라운드 핸들러나 workmanager 는
+  /// main() 을 거치지 않는 별도 isolate 에서 돌기 때문에, main() 에서 한 번
+  /// 불러둔 [_base] 를 그쪽에서는 볼 수 없다 (isolate 는 상태를 공유하지 않는다).
+  /// 그래서 초기화를 부팅 시점 한 번으로 끝내지 않고, 네트워크를 쓰는 진입점마다
+  /// 이걸 부르는 방식으로 둔다.
+  static Future<String?> ensureLoaded() async {
+    if (_base != null) return _base;
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getString(_prefsKey)?.trim();
+    if (saved != null && saved.isNotEmpty) _base = saved;
+    return _base;
+  }
+
+  /// 주소가 설정돼 있는지 — main() 의 부팅 분기가 설정 화면을 띄울지 정하는 기준.
+  static bool get isConfigured => _base != null;
+
+  /// 현재 게이트웨이 주소.
+  ///
+  /// [ensureLoaded] 없이 부르면 던진다. 예전 기본값 같은 걸로 조용히 폴백하면
+  /// 남의 서버로 요청이 나가거나 원인 모를 실패가 되므로, 차라리 여기서 터뜨린다.
+  /// [captchaGifUrl]·[signalingUri] 가 동기 함수라서 이 getter 도 동기로 남겨뒀다.
+  static String get cloudflareBase {
+    final base = _base;
+    if (base == null) {
+      throw StateError(
+        'Gateway 주소가 설정되지 않았습니다 (ensureLoaded 를 먼저 호출해야 합니다).',
+      );
+    }
+    return base;
+  }
+
+  /// 사용자가 입력한 주소를 저장 가능한 형태로 다듬는다.
+  ///
+  /// 스킴이 없으면 https 를 붙이고 끝 슬래시를 떼며, host 가 없거나 http(s) 가
+  /// 아니면 null 을 반환한다(= 입력 오류).
+  static String? normalizeBase(String raw) {
+    var s = raw.trim();
+    if (s.isEmpty) return null;
+    if (!s.contains('://')) s = 'https://$s';
+    while (s.endsWith('/')) {
+      s = s.substring(0, s.length - 1);
+    }
+
+    final uri = Uri.tryParse(s);
+    if (uri == null || uri.host.isEmpty) return null;
+    if (uri.scheme != 'http' && uri.scheme != 'https') return null;
+    return s;
+  }
+
+  /// 이 주소에 실제로 게이트웨이가 떠 있는지 확인한다 (저장 전 검증용).
+  ///
+  /// /msa/services 를 쓰는 이유: GET 이고 무인증이고 대상 PC 로 라우팅되지 않는
+  /// 가벼운 조회라, 프록시 자체가 살아있는지만 보는 데 딱 맞다.
+  static Future<bool> probe(String base) async {
+    try {
+      final res = await http
+          .get(Uri.parse('$base/msa/services'))
+          .timeout(const Duration(seconds: 8));
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// 주소를 저장하고 메모리 캐시까지 갱신한다.
+  /// [normalizeBase] 를 통과한 값을 넘겨야 한다.
+  static Future<void> saveBase(String normalized) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefsKey, normalized);
+    _base = normalized;
+  }
 
   static String get _proxyUrl => '$cloudflareBase/msa/proxy';
 
