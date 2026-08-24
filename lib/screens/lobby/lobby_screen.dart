@@ -72,17 +72,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
   Timer? _pollTimer;      // cycle 폴링 (1초)
   Timer? _timeSyncTimer;  // 시간 동기화 (1분)
-  Timer? _inputStateTimer; // 입력 제어 on/off 폴링 (3초)
   bool _initialStatusFetched = false;
-
-  // ===== 입력 제어(inputHandler on/off) =====
-  // null = 아직 모름(조회 전/실패). 이 상태는 앱 전용이 아니라 PC 공유 상태다 —
-  // 러너(mainAction runner)나 agentServer 도 on/off 를 바꾸므로, 앱이 마지막으로
-  // 누른 값을 그대로 믿지 않고 주기적으로 서버 값을 따라간다.
-  bool? _inputEnabled;
-  // 토글 요청이 나가 있는 동안엔 폴링 결과로 값을 덮지 않는다. 명령이 반영되기
-  // 전의 옛 값이 돌아와 스위치가 되튕기는 걸 막기 위함.
-  bool _inputToggleInFlight = false;
 
   double _streamScale = 1.0;
   Offset _streamOffset = Offset.zero;
@@ -154,7 +144,6 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     _fetchBuildList();
     _fetchCharacterMapping();
     _fetchCycleAndBuild();
-    _fetchInputEnabled();
     _syncTime();
 
     // cycle 폴링: 1초마다
@@ -168,14 +157,6 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       const Duration(minutes: 1),
       (_) => _syncTime(),
     );
-
-    // 입력 제어 상태 폴링: 3초마다. cycle 폴링(1초)에 얹지 않은 건 그 주기가
-    // 이미 요청 2개를 순차로 물고 있어서, 여기에 하나 더 붙이면 1초 안에 못
-    // 끝나고 폴링이 겹치기 때문이다.
-    _inputStateTimer = Timer.periodic(
-      const Duration(seconds: 3),
-      (_) => _fetchInputEnabled(),
-    );
   }
 
   @override
@@ -185,7 +166,6 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       debugPrint('App resumed, reconnecting WebRTC and syncing time...');
       _reconnectWebRTC();
       _syncTime();  // 화면 켤 때 시간 동기화
-      _fetchInputEnabled();  // 백그라운드 동안 바뀌었을 수 있다
     }
   }
 
@@ -231,7 +211,6 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
     _pollTimer?.cancel();
     _timeSyncTimer?.cancel();
-    _inputStateTimer?.cancel();
     _cycleCtrl.dispose();
     _hourCtrl.dispose();
     _minCtrl.dispose();
@@ -456,56 +435,6 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     // 매핑에 없거나(수동 실행) 같은 빌드를 공유하는 캐릭터가 둘 이상이라 모호하면
     // 캐릭터명 대신 실제 빌드명을 그대로 라벨로 보여준다.
     _currentCharacter = _buildToCharacter[_currentMap] ?? _currentMap;
-  }
-
-  /// 입력 제어 on/off 상태 조회 (진입 시 1회 + 3초 폴링 + 앱 복귀 시).
-  Future<void> _fetchInputEnabled() async {
-    final enabled = await _api.fetchInputEnabled();
-    if (!mounted) return;
-    // 토글이 나가 있는 동안의 응답은 버린다 (_inputToggleInFlight 주석 참고).
-    if (_inputToggleInFlight) return;
-    if (_inputEnabled == enabled) return;
-    setState(() => _inputEnabled = enabled);
-  }
-
-  /// 입력 제어 스위치 토글.
-  ///
-  /// off 는 대상 PC 의 입력을 즉시 끊는 차단 스위치다 — 러너가 도는 중에도
-  /// 막지 않는다(그게 이 스위치의 목적). 다만 러너는 계속 진행한다고 믿은 채
-  /// 입력만 안 나가는 상태가 되므로, 껐다는 사실을 스낵바로 남긴다.
-  Future<void> _handleInputToggle(bool enabled) async {
-    setState(() {
-      _inputEnabled = enabled;   // 낙관적 반영 (폴링이 뒤에 바로잡는다)
-      _inputToggleInFlight = true;
-    });
-
-    final ok = await _api.setInputEnabled(enabled);
-    if (!mounted) return;
-
-    _inputToggleInFlight = false;
-
-    if (!ok) {
-      // 실패했으면 지금 상태를 모르는 것이므로 "모름"으로 되돌리고 재조회한다.
-      setState(() => _inputEnabled = null);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('입력 제어 전환에 실패했습니다')),
-      );
-      _fetchInputEnabled();
-      return;
-    }
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          enabled
-              ? '입력 제어를 켰습니다'
-              : '입력을 차단했습니다 — 러너·트랙패드 입력이 모두 나가지 않습니다',
-        ),
-      ),
-    );
-
-    // 실제 반영값으로 한 번 확인 (다른 주체가 동시에 바꿨을 수도 있다).
-    _fetchInputEnabled();
   }
 
   /// cycle(statusChecker) 과 running_build(mainAction) 폴링 (1초마다, 진입 시 1회 포함)
@@ -879,12 +808,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          LobbyHeader(
-            hostText: _hostText,
-            onInfoTap: _openInfoSheet,
-            inputEnabled: _inputEnabled,
-            onInputToggle: _handleInputToggle,
-          ),
+          LobbyHeader(hostText: _hostText, onInfoTap: _openInfoSheet),
           const SizedBox(height: 8),
           LobbyWebRTCView(
             renderer: _renderer,
@@ -943,12 +867,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          LobbyHeader(
-            hostText: _hostText,
-            onInfoTap: _openInfoSheet,
-            inputEnabled: _inputEnabled,
-            onInputToggle: _handleInputToggle,
-          ),
+          LobbyHeader(hostText: _hostText, onInfoTap: _openInfoSheet),
           const SizedBox(height: 8),
           _buildTouchableStreamView(),
           const SizedBox(height: 16),
