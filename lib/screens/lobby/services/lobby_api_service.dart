@@ -182,6 +182,43 @@ class LobbyApiService {
     } catch (_) {}
   }
 
+  // ── inputHandler (입력 제어 on/off) ──
+
+  /// 대상 PC 의 입력 제어가 켜져 있는지 조회한다 (inputHandler `/state`).
+  ///
+  /// 조회 실패(네트워크/구버전 inputHandler)면 null — "모른다"와 "꺼져 있다"는
+  /// 구분해야 한다. 실패를 false 로 뭉개면 UI 가 꺼진 것처럼 보여주고, 사용자가
+  /// 켜려고 토글하면 이미 켜져 있던 PC 가 도리어 꺼진다.
+  Future<bool?> fetchInputEnabled() async {
+    try {
+      final res = await Gateway.call(ip, 'inputHandler/state', method: 'GET');
+      final resp = Gateway.unwrap(res);
+      if (resp is bool) return resp;
+      if (resp is num) return resp != 0;
+      if (resp is String) return resp == '1' || resp.toLowerCase() == 'true';
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 입력 제어를 켜거나 끈다 (inputHandler `/on`, `/off`).
+  ///
+  /// off 는 대상 PC 의 키보드·마우스 출력을 전부 막는 차단 스위치다 — 러너가
+  /// 돌고 있어도 즉시 끊기며, 앱의 트랙패드/클릭도 같이 막힌다.
+  Future<bool> setInputEnabled(bool enabled) async {
+    try {
+      final res = await Gateway.call(
+        ip,
+        enabled ? 'inputHandler/on' : 'inputHandler/off',
+        method: 'POST',
+      );
+      return res.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
   // ── inputHandler (마우스) ──
 
   /// 영상 절대좌표 이동. gateway.py mouse_move → inputHandler /mouse/move?x=&y=
