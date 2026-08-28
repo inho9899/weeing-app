@@ -12,6 +12,7 @@ import 'widgets/cycle_control.dart';
 import 'widgets/start_time_control.dart';
 import 'widgets/mouse_mode.dart';
 import 'services/lobby_api_service.dart';
+import 'services/remote_input.dart';
 
 class LobbyScreen extends StatefulWidget {
   /// 대상 머신 IP (예: "192.168.0.5")
@@ -40,6 +41,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   // ===== WebRTC =====
   RTCPeerConnection? _pc;
   RTCDataChannel? _inputChannel;
+  late final RemoteInput _input = RemoteInput(ip: widget.ip);
   final RTCVideoRenderer _renderer = RTCVideoRenderer();
   bool _webrtcConnected = false;
   Timer? _webrtcRetryTimer;
@@ -181,6 +183,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     _signalingChannel?.sink.close();
     _signalingChannel = null;
 
+    _input.detachChannel();
     _inputChannel?.close();
     _inputChannel = null;
 
@@ -205,6 +208,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     _webrtcRetryTimer?.cancel();
     _signalingSubscription?.cancel();
     _signalingChannel?.sink.close();
+    _input.dispose();
     _inputChannel?.close();
     _pc?.close();
     _renderer.dispose();
@@ -357,7 +361,12 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     };
 
     _pc!.onDataChannel = (channel) {
+      // 스트리머가 여는 "input" 채널. 여기로 입력을 보내면 Cloudflare 터널을
+      // 지나지 않고 이미 열린 P2P 연결로 곧장 간다.
       _inputChannel = channel;
+      if (channel.label == 'input') {
+        _input.attachChannel(channel);
+      }
     };
   }
 
@@ -548,9 +557,9 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     final y = (ny * sh).round() + _captureOffsetY;
 
     if (clickButton != null) {
-      _api.mouseClickAt(clickButton, x, y);
+      unawaited(_input.click(clickButton, x: x, y: y));
     } else {
-      _api.mouseMove(x, y);
+      unawaited(_input.moveTo(x, y));
     }
   }
 
@@ -874,6 +883,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
           Expanded(
             child: MouseMode(
               ip: widget.ip,
+              input: _input,
               initialScale: _streamScale,
               initialOffset: _streamOffset,
               streamViewSize: _streamViewSize,

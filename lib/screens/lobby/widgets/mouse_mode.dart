@@ -1,6 +1,7 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 
-import 'package:weeing_app/gateway/gateway.dart';
+import 'package:weeing_app/screens/lobby/services/remote_input.dart';
 
 /// 마우스 트랙패드 모드 위젯
 /// Google Chrome Remote Desktop 스타일:
@@ -10,6 +11,9 @@ import 'package:weeing_app/gateway/gateway.dart';
 class MouseMode extends StatefulWidget {
   /// 대상 머신 IP
   final String ip;
+
+  /// 입력 전송 경로. 데이터 채널이 열려 있으면 그쪽으로, 아니면 HTTP 로 나간다.
+  final RemoteInput input;
   final Function(double) onScaleChanged;
   final Function(Offset) onOffsetChanged;
   final double initialScale;
@@ -23,6 +27,7 @@ class MouseMode extends StatefulWidget {
 
   const MouseMode({
     super.key,
+    required this.input,
     required this.ip,
     required this.onScaleChanged,
     required this.onOffsetChanged,
@@ -54,24 +59,16 @@ class _MouseModeState extends State<MouseMode> {
   // 핀치 줌 중인지 여부
   bool _isPinching = false;
 
-  // gateway.py 상대이동은 inputHandler /mouse/dmove?dx=&dy=
-  Future<void> _sendMouseMove(int dx, int dy) async {
-    try {
-      await Gateway.call(widget.ip, 'inputHandler/mouse/dmove',
-          method: 'POST', params: {'dx': dx, 'dy': dy});
-    } catch (e) {
-      debugPrint('MouseMode move error: $e');
-    }
+  // 상대 이동은 RemoteInput 이 누적해서 125Hz 로 한 번씩 내보낸다.
+  // 제스처 콜백마다 요청을 던지면 드래그 1초에 60~120건이 나가고, 그 하나하나가
+  // 새 TLS 핸드셰이크였다.
+  void _sendMouseMove(int dx, int dy) {
+    widget.input.moveBy(dx, dy);
   }
 
-  // gateway.py mouse_click → inputHandler /mouse/click?click_mode=&delay=
-  Future<void> _sendMouseClick(String button) async {
-    try {
-      await Gateway.call(widget.ip, 'inputHandler/mouse/click',
-          method: 'POST', params: {'click_mode': button, 'delay': 0});
-    } catch (e) {
-      debugPrint('MouseMode click error: $e');
-    }
+  void _sendMouseClick(String button) {
+    // 클릭 직전에 밀린 이동을 먼저 내보내는 건 RemoteInput.click 이 처리한다.
+    unawaited(widget.input.click(button));
   }
 
   @override
