@@ -4,6 +4,9 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 class LobbyWebRTCView extends StatelessWidget {
   final RTCVideoRenderer renderer;
   final bool connected;
+
+  /// 영상이 안 나올 때 오버레이에 보여줄 상태 ("연결 중", "재연결 중 (n)" 등).
+  final String status;
   final double scale;
   final Offset offset;
 
@@ -11,6 +14,7 @@ class LobbyWebRTCView extends StatelessWidget {
     super.key,
     required this.renderer,
     required this.connected,
+    this.status = '',
     required this.scale,
     required this.offset,
   });
@@ -42,18 +46,18 @@ class LobbyWebRTCView extends StatelessWidget {
               if (!connected)
                 Container(
                   color: Colors.black.withOpacity(0.35),
-                  child: const Column(
+                  child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      CircularProgressIndicator(
+                      const CircularProgressIndicator(
                         strokeWidth: 2.5,
                         valueColor: AlwaysStoppedAnimation(Colors.white),
                       ),
-                      SizedBox(height: 12),
+                      const SizedBox(height: 12),
                       Text(
-                        'WebRTC 연결 중...\n(잠시 후 자동 재연결)',
+                        status.isEmpty ? 'WebRTC 연결 중...' : status,
                         textAlign: TextAlign.center,
-                        style: TextStyle(
+                        style: const TextStyle(
                           color: Colors.white70,
                           fontSize: 13,
                         ),
