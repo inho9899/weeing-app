@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'package:weeing_app/gateway/gateway.dart';
@@ -11,6 +12,7 @@ import 'widgets/lobby_controls.dart';
 import 'widgets/cycle_control.dart';
 import 'widgets/start_time_control.dart';
 import 'widgets/mouse_mode.dart';
+import 'widgets/run_options_sheet.dart';
 import 'services/lobby_api_service.dart';
 import 'services/remote_input.dart';
 
@@ -98,6 +100,9 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
   // 폴백을 보류한다.
   bool _characterMappingLoaded = false;
 
+  // 캐릭터명 : 끈 준비·정리 단계 키 목록. 이 폰에만 저장한다 (SharedPreferences 'run_skip').
+  Map<String, List<String>> _skipByCharacter = {};
+
   Timer? _pollTimer;      // cycle 폴링 (1초)
   Timer? _timeSyncTimer;  // 시간 동기화 (1분)
   bool _initialStatusFetched = false;
@@ -143,6 +148,43 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
     return _characterToBuild.isNotEmpty ? '빌드를 선택해주세요' : '빌드를 등록해주세요';
   }
 
+  /// 실제 매핑과 맞는 캐릭터명. _currentCharacter 는 역매핑이 모호하면 빌드명이 들어가는
+  /// 표시용 라벨이라, 그때는 '' — Start 에 캐릭터를 보내지 않고 단계 설정도 열지 않는다.
+  String get _selectedCharacter =>
+      _characterToBuild[_currentCharacter] == _currentMap ? _currentCharacter : '';
+
+  List<String> get _currentSkip => _skipByCharacter[_selectedCharacter] ?? const [];
+
+  Future<void> _loadRunSkips() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('run_skip');
+    if (raw == null || !mounted) return;
+    try {
+      final decoded = jsonDecode(raw) as Map<String, dynamic>;
+      setState(() {
+        _skipByCharacter = {
+          for (final e in decoded.entries) e.key: List<String>.from(e.value as List),
+        };
+      });
+    } catch (_) {
+      // 깨진 값이면 모두 켠 상태로 시작한다
+    }
+  }
+
+  Future<void> _openRunOptions() {
+    final character = _selectedCharacter;
+    return showRunOptionsSheet(
+      context,
+      character: character,
+      skip: _currentSkip,
+      onChanged: (skip) async {
+        setState(() => _skipByCharacter[character] = skip);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString('run_skip', jsonEncode(_skipByCharacter));
+      },
+    );
+  }
+
   /// 드롭다운 표시 텍스트: "캐릭터명 - 빌드명". 캐릭터로 매핑 안 된 값(raw
   /// 빌드명 자체가 값인 경우)은 라벨을 따로 두지 않아 값 그대로 보여준다.
   Map<String, String> get _characterDropdownLabels => {
@@ -176,6 +218,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
     _fetchBuildList();
     _fetchCharacterMapping();
+    _loadRunSkips();
     _fetchCycleAndBuild();
     _syncTime();
 
@@ -841,10 +884,8 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
   Future<void> _handleStart() async {
     if (_currentMap.isEmpty) return;
-    // _currentCharacter 는 역매핑이 모호하면 빌드명이 들어가는 표시용 라벨이라, 실제 매핑과 맞을 때만 보낸다
-    final character =
-        _characterToBuild[_currentCharacter] == _currentMap ? _currentCharacter : '';
-    await _api.start(_currentMap, _startHour, _startMinute, character: character);
+    await _api.start(_currentMap, _startHour, _startMinute,
+        character: _selectedCharacter, skip: _currentSkip);
     _fetchCycleAndBuild();
   }
 
@@ -1187,6 +1228,10 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
                 _currentMap = _characterToBuild[v] ?? v;
               });
             },
+            onOptionsTap: _selectedCharacter.isEmpty ? null : _openRunOptions,
+            optionsSummary: _currentSkip.isEmpty
+                ? null
+                : '꺼짐: ${runStepLabels(_currentSkip).join(', ')}',
             onStart: _handleStart,
             onPause: _handlePause,
             cycle: CycleControl(

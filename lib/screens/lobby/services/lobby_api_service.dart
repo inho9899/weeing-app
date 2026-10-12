@@ -90,15 +90,18 @@ class LobbyApiService {
 
   /// 시작. 이미 실행 중(409)이면 재개(intrAction/continue = gateway.py continue_main).
   /// [character] 는 봇이 준비 단계에서 넥슨 API 로 캐릭터 정보를 볼 때 쓴다 — 모르면 비워 둔다.
+  /// [skip] 은 건너뛸 준비·정리 단계 키 목록이다 (run_options_sheet.dart 의 runStepGroups).
   Future<bool> start(String mapName, int startHour, int startMinute,
-      {String character = ''}) async {
+      {String character = '', List<String> skip = const []}) async {
     if (mapName.isEmpty) return false;
     try {
       final api =
           'mainAction/weeing/start/${Uri.encodeComponent(mapName)}/$startHour/$startMinute';
-      final res = await Gateway.call(ip, api,
-          method: 'POST',
-          params: character.isEmpty ? null : {'character': character});
+      final params = {
+        if (character.isNotEmpty) 'character': character,
+        if (skip.isNotEmpty) 'skip': skip.join(','),
+      };
+      final res = await Gateway.call(ip, api, method: 'POST', params: params);
       if (res.statusCode == 409) {
         final resumeRes = await Gateway.call(ip, 'intrAction/continue', method: 'POST');
         return resumeRes.statusCode == 200;

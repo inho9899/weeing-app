@@ -16,6 +16,14 @@ class LobbyControls extends StatelessWidget {
   /// currentMap이 비어있을 때(실행 중도 아니고 선택도 안 됐을 때) 보여줄 안내 문구.
   final String? hint;
 
+  /// 드롭다운 옆 톱니 — 선택한 캐릭터의 준비·정리 단계 설정. null 이면 비활성
+  /// (캐릭터를 안 골랐거나, 표시값이 캐릭터가 아니라 빌드명일 때).
+  final VoidCallback? onOptionsTap;
+
+  /// 끈 단계가 있을 때 드롭다운 아래에 보여줄 한 줄 (예: "꺼짐: 도핑"). 꺼둔 걸 잊고
+  /// Start 를 누르지 않게 한다.
+  final String? optionsSummary;
+
   const LobbyControls({
     super.key,
     required this.builds,
@@ -27,6 +35,8 @@ class LobbyControls extends StatelessWidget {
     required this.startTime,
     this.itemLabels,
     this.hint,
+    this.onOptionsTap,
+    this.optionsSummary,
   });
 
   @override
@@ -36,41 +46,32 @@ class LobbyControls extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          decoration: BoxDecoration(
-            color: darkGrey,
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: DropdownButtonHideUnderline(
-            child: DropdownButton<String>(
-              value: currentMap.isNotEmpty ? currentMap : null,
-              hint: hint == null
-                  ? null
-                  : Text(
-                      hint!,
-                      style: TextStyle(color: Colors.grey[400]),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-              isExpanded: true,
-              dropdownColor: Colors.grey[850],
-              iconEnabledColor: Colors.white,
-              style: const TextStyle(color: Colors.white),
-              items: builds
-                  .map(
-                    (b) => DropdownMenuItem(
-                      value: b,
-                      child: Text(
-                        itemLabels?[b] ?? b,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  )
-                  .toList(),
-              onChanged: onMapChanged,
+        Row(
+          children: [
+            Expanded(child: _dropdown(darkGrey)),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 48,
+              height: 48,
+              child: Material(
+                color: onOptionsTap == null ? Colors.grey[400] : darkGrey,
+                borderRadius: BorderRadius.circular(6),
+                child: IconButton(
+                  icon: const Icon(Icons.settings, color: Colors.white),
+                  tooltip: '준비·정리 단계',
+                  onPressed: onOptionsTap,
+                ),
+              ),
             ),
-          ),
+          ],
         ),
+        if (optionsSummary != null) ...[
+          const SizedBox(height: 6),
+          Text(
+            optionsSummary!,
+            style: const TextStyle(fontSize: 13, color: Colors.deepOrange),
+          ),
+        ],
         const SizedBox(height: 12),
         Row(
           children: [
@@ -92,6 +93,44 @@ class LobbyControls extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+
+  Widget _dropdown(Color darkGrey) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: darkGrey,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: currentMap.isNotEmpty ? currentMap : null,
+          hint: hint == null
+              ? null
+              : Text(
+                  hint!,
+                  style: TextStyle(color: Colors.grey[400]),
+                  overflow: TextOverflow.ellipsis,
+                ),
+          isExpanded: true,
+          dropdownColor: Colors.grey[850],
+          iconEnabledColor: Colors.white,
+          style: const TextStyle(color: Colors.white),
+          items: builds
+              .map(
+                (b) => DropdownMenuItem(
+                  value: b,
+                  child: Text(
+                    itemLabels?[b] ?? b,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: onMapChanged,
+        ),
+      ),
     );
   }
 
