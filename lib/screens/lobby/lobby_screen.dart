@@ -841,7 +841,10 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
   Future<void> _handleStart() async {
     if (_currentMap.isEmpty) return;
-    await _api.start(_currentMap, _startHour, _startMinute);
+    // _currentCharacter 는 역매핑이 모호하면 빌드명이 들어가는 표시용 라벨이라, 실제 매핑과 맞을 때만 보낸다
+    final character =
+        _characterToBuild[_currentCharacter] == _currentMap ? _currentCharacter : '';
+    await _api.start(_currentMap, _startHour, _startMinute, character: character);
     _fetchCycleAndBuild();
   }
 
