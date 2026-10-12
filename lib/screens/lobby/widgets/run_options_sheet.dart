@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 const runStepGroups = <String, Map<String, String>>{
   'preprocess': {
     'luna_petite': '루나 쁘띠 펫 확인',
+    'daily_quest': '일퀘 (그란디스)',
     'doping': '도핑',
     'artifact': '아티팩트 연장',
     'union_wealth': '유니온의 부',
