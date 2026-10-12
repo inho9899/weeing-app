@@ -3,13 +3,13 @@ import 'package:flutter/material.dart';
 /// 캐릭터별로 끌 수 있는 준비·정리 단계. 키는 봇(mainAction preprocess/postprocess)이
 /// Start 의 skip 쿼리로 받는 이름이라 바꾸면 안 된다. 사냥터 입장은 항상 하므로 없다.
 const runStepGroups = <String, Map<String, String>>{
-  '준비': {
+  'preprocess': {
     'luna_petite': '루나 쁘띠 펫 확인',
     'doping': '도핑',
     'artifact': '아티팩트 연장',
     'union_wealth': '유니온의 부',
   },
-  '정리': {
+  'postprocess': {
     'union_coin': '유니온 코인',
     'daily_gift': '데일리 기프트',
   },
@@ -86,7 +86,9 @@ class _RunOptionsSheetState extends State<_RunOptionsSheet> {
               style: TextStyle(fontSize: 13, color: Colors.grey[600]),
             ),
             for (final group in runStepGroups.entries) ...[
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
+              const Divider(height: 1),
+              const SizedBox(height: 12),
               Text(
                 group.key,
                 style: TextStyle(fontSize: 13, color: Colors.grey[700]),
