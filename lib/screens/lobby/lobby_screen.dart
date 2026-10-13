@@ -826,6 +826,10 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       return;
     }
 
+    // 이미 고른 캐릭터가 지금 빌드에 매핑돼 있으면 그대로 둔다 — 같은 빌드를 쓰는 캐릭터가 둘이면
+    // 아래 역매핑이 빌드명으로 덮어써, 1초마다 고른 캐릭터가 사라지고 Start 에 캐릭터가 안 실렸다.
+    if (_characterToBuild[_currentCharacter] == _currentMap) return;
+
     // 매핑에 없거나(수동 실행) 같은 빌드를 공유하는 캐릭터가 둘 이상이라 모호하면
     // 캐릭터명 대신 실제 빌드명을 그대로 라벨로 보여준다.
     _currentCharacter = _buildToCharacter[_currentMap] ?? _currentMap;
