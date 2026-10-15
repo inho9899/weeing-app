@@ -58,7 +58,7 @@ class LobbyControls extends StatelessWidget {
                 borderRadius: BorderRadius.circular(6),
                 child: IconButton(
                   icon: const Icon(Icons.settings, color: Colors.white),
-                  tooltip: 'preprocess·postprocess',
+                  tooltip: 'preprocess·postprocess·interrupt',
                   onPressed: onOptionsTap,
                 ),
               ),
