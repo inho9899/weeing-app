@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 /// 탐지기를 끄면 봇이 풀지 않고 멈춘다(사람이 풀고 재개). type 은 꺼도 캡차 GIF 는 앱에 올라온다.
 const runStepGroups = <String, Map<String, String>>{
   'preprocess': {
+    // 끄면 봇이 기억해 둔 키세팅 대신 매번 키세팅 창을 열어 다시 읽는다
+    'keymap_cache': '키세팅 저장값 사용 (끄면 매번 새로 읽음)',
     'luna_petite': '루나 쁘띠 펫 확인',
     'arcane_quest': '일퀘 (아케인리버)',
     'daily_quest': '일퀘 (그란디스)',
