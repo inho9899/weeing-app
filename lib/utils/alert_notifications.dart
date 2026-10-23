@@ -20,15 +20,19 @@ class AlertNotifications {
 
   static final Map<String, ({AndroidNotificationChannel channel, Priority priority})>
       _specs = {
+    // 안드로이드 채널은 한 번 만들면 설정이 안 바뀌어 id 를 바꾸고 옛 채널은 init() 에서 지운다.
+    // 'alert_low'(Importance.low)는 바로 안 떴고, 'alert_low_v2' 는 소리가 있어 진동 모드에서
+    // 안드로이드가 소리 대신 기본 진동을 울렸다 — 소리까지 끈다.
     'low': (
       channel: const AndroidNotificationChannel(
-        'alert_low',
+        'alert_low_v3',
         '알림 - 낮음',
-        description: '낮은 심각도 알림 (조용히)',
-        importance: Importance.low,
+        description: '낮은 심각도 알림 (소리·진동 없음)',
+        importance: Importance.high,
+        playSound: false,
         enableVibration: false,
       ),
-      priority: Priority.low,
+      priority: Priority.high,
     ),
     'middle': (
       channel: const AndroidNotificationChannel(
@@ -57,9 +61,12 @@ class AlertNotifications {
 
   /// 앱 시작 시(포그라운드 isolate)와 백그라운드 핸들러 진입 시(별도 isolate)
   /// 둘 다에서 호출해야 한다 — 두 isolate는 상태를 공유하지 않는다.
+  ///
+  /// 권한 요청은 여기서 하지 않는다 — 백그라운드 isolate 엔 Activity 가 없어
+  /// 플러그인이 예외를 던지고, 그러면 그 메시지의 show() 까지 못 가서 알림이 사라졌다.
+  /// 포그라운드에서 [requestPermission] 을 따로 부른다.
   static Future<void> init() async {
     if (_initialized) return;
-    _initialized = true;
 
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const iosSettings = DarwinInitializationSettings();
@@ -73,11 +80,21 @@ class AlertNotifications {
       for (final spec in _specs.values) {
         await androidImpl.createNotificationChannel(spec.channel);
       }
-      // Android 13+(targetSdk 33+)는 알림 표시 자체에 런타임 권한이 필요하다 —
-      // 이게 없으면 서버/FCM은 전부 성공으로 나오는데 폰엔 아무것도 안 뜨는,
-      // 지금까지 겪던 증상과 똑같은 실패가 조용히 발생한다.
-      await androidImpl.requestNotificationsPermission();
+      await androidImpl.deleteNotificationChannel('alert_low');
+      await androidImpl.deleteNotificationChannel('alert_low_v2');
     }
+
+    _initialized = true;
+  }
+
+  /// Android 13+(targetSdk 33+)는 알림 표시 자체에 런타임 권한이 필요하다 —
+  /// 이게 없으면 서버/FCM은 전부 성공으로 나오는데 폰엔 아무것도 안 뜬다.
+  /// Activity 가 있어야 해서 포그라운드(main)에서만 부른다.
+  static Future<void> requestPermission() async {
+    await _plugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
   }
 
   static ({AndroidNotificationChannel channel, Priority priority}) _specFor(
@@ -106,6 +123,7 @@ class AlertNotifications {
           channelDescription: spec.channel.description,
           importance: spec.channel.importance,
           priority: spec.priority,
+          playSound: spec.channel.playSound,
           enableVibration: spec.channel.enableVibration,
           vibrationPattern: spec.channel.vibrationPattern,
         ),
