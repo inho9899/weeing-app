@@ -47,8 +47,9 @@ class _ServerSetupScreenState extends State<ServerSetupScreen> {
   /// device_list_v2 의 deviceId 는 새 서버에 존재하지 않는 값이어서, 그대로
   /// 두면 이름 수정·삭제가 조용히 실패한다. 그래서 주소 변경 시 함께 비운다.
   ///
-  /// 키의 주인은 config_screen.dart(device_list_v2 / build_mapping /
-  /// build_scheduler)와 background_task.dart(구버전 device_list)다.
+  /// 키의 주인은 config_screen.dart(device_list_v2 / build_mapping)와
+  /// background_task.dart(구버전 device_list)다. build_scheduler 는 빌드 스케줄러를
+  /// 뺀 뒤 남은 예전 캐시라 지우기만 한다.
   static const List<String> _serverScopedKeys = [
     'device_list_v2',
     'device_list',

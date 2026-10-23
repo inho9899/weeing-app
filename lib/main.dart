@@ -8,6 +8,7 @@ import 'gateway/gateway.dart';
 import 'screens/config/config_screen.dart';
 import 'screens/setup/server_setup_screen.dart';
 import 'utils/alert_notifications.dart';
+import 'utils/app_update.dart';
 
 /// 백그라운드/종료 상태에서 수신할 때 호출되는 handler.
 ///
@@ -54,6 +55,7 @@ void main() async {
   }
 
   await AlertNotifications.init();
+  await AlertNotifications.requestPermission();
 
   // 게이트웨이 주소를 메모리로 올린다. 저장된 값이 없으면 아래 MyApp 이
   // ConfigScreen 대신 ServerSetupScreen 을 띄운다 — 주소가 없으면 PC 추가부터
@@ -81,13 +83,40 @@ class MyApp extends StatefulWidget {
   State<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends State<MyApp> {
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   /// main() 의 ensureLoaded 결과. 설정 화면에서 저장이 끝나면 true 로 바뀐다.
   bool _configured = Gateway.isConfigured;
+
+  /// 업데이트 대화상자는 어느 화면 위에서든 떠야 해서 MaterialApp 의 navigator 로 띄운다.
+  final _navigatorKey = GlobalKey<NavigatorState>();
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _checkUpdate());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) _checkUpdate();
+  }
+
+  void _checkUpdate() {
+    final context = _navigatorKey.currentContext;
+    if (context != null) AppUpdate.check(context);
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: _navigatorKey,
       title: 'FCM + Device Config',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),

@@ -6,13 +6,13 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 
 import 'package:weeing_app/gateway/gateway.dart';
 import '../../utils/alert_notifications.dart';
+import '../../utils/app_update.dart';
 import '../setup/server_setup_screen.dart';
 import 'models/device_info.dart';
 import 'widgets/device_row.dart';
 import 'widgets/add_ip_dialog.dart';
 import 'widgets/rename_device_dialog.dart';
 import 'widgets/build_mapping_dialog.dart';
-import 'widgets/build_scheduler_dialog.dart';
 
 const String backgroundTaskKey = 'device_status_check';
 
@@ -27,7 +27,7 @@ class ConfigScreen extends StatefulWidget {
 class _ConfigScreenState extends State<ConfigScreen> {
   final List<DeviceInfo> _devices = [];
   Map<String, String> _buildMappings = {};
-  Map<String, List<Map<String, dynamic>>> _buildSchedules = {};
+  String _versionLabel = '';
 
   Timer? _pollTimer;
 
@@ -42,26 +42,12 @@ class _ConfigScreenState extends State<ConfigScreen> {
     _initNotifications();
     _loadDevices();
     _bootstrapBuildMappings();
-    _bootstrapSchedules();
+    AppUpdate.versionLabel().then((label) {
+      if (mounted) setState(() => _versionLabel = label);
+    });
     _pollTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
       _refreshAllStatuses();
     });
-  }
-
-  // 빌드 스케줄은 이제 proxy 에 상주하는 스케줄러(cloudfare/scheduler.py)가
-  // 실행 주체다. 서버가 source of truth 이므로 우선 서버에서 조회하고,
-  // 오프라인 등으로 실패했을 때만 로컬 캐시(SharedPreferences)로 폴백한다.
-  Future<void> _bootstrapSchedules() async {
-    final remote = await Gateway.fetchSchedules();
-    if (remote != null) {
-      if (!mounted) return;
-      setState(() {
-        _buildSchedules = remote;
-      });
-      await _saveBuildSchedulesLocalCache();
-      return;
-    }
-    await _loadBuildSchedules();
   }
 
   Future<void> _bootstrapBuildMappings() async {
@@ -82,21 +68,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          '$what 서버 저장에 실패했습니다. 이 상태로는 예약된 실행에 반영되지 않습니다. '
-          '네트워크 확인 후 다시 저장해주세요.',
-        ),
-        duration: const Duration(seconds: 6),
-      ),
-    );
-  }
-
-  void _warnServerFetchFailed(String what) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          '$what 서버 조회에 실패해 기기에 저장된 이전 값을 보여줍니다. '
-          '실제 프록시 스케줄과 다를 수 있으니 네트워크 확인 후 다시 열어주세요.',
+          '$what 서버 저장에 실패했습니다. 네트워크 확인 후 다시 저장해주세요.',
         ),
         duration: const Duration(seconds: 6),
       ),
@@ -201,41 +173,6 @@ class _ConfigScreenState extends State<ConfigScreen> {
     await prefs.setString('build_mapping', jsonEncode(_buildMappings));
   }
 
-  Future<void> _loadBuildSchedules() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('build_scheduler');
-    if (raw == null || raw.isEmpty) return;
-
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is Map) {
-        final nextSchedules = <String, List<Map<String, dynamic>>>{};
-        for (final entry in decoded.entries) {
-          final dayKey = entry.key.toString();
-          final value = entry.value;
-          if (value is List) {
-            final blocks = value
-                .whereType<Map>()
-                .map((e) => Map<String, dynamic>.from(e))
-                .toList();
-            if (blocks.isNotEmpty) {
-              nextSchedules[dayKey] = blocks;
-            }
-          }
-        }
-        if (!mounted) return;
-        setState(() {
-          _buildSchedules = nextSchedules;
-        });
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _saveBuildSchedulesLocalCache() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('build_scheduler', jsonEncode(_buildSchedules));
-  }
-
   @override
   void dispose() {
     _pollTimer?.cancel();
@@ -309,7 +246,7 @@ class _ConfigScreenState extends State<ConfigScreen> {
   }
 
   /// 서버 주소 변경 화면. 주소가 바뀌면(true) 로컬 캐시가 비워진 상태이므로
-  /// 기기 목록과 매핑·스케줄을 새 서버 기준으로 다시 읽어온다.
+  /// 기기 목록과 매핑을 새 서버 기준으로 다시 읽어온다.
   Future<void> _openServerSetupScreen() async {
     final changed = await Navigator.of(context).push<bool>(
       MaterialPageRoute(
@@ -321,11 +258,9 @@ class _ConfigScreenState extends State<ConfigScreen> {
     setState(() {
       _devices.clear();
       _buildMappings = {};
-      _buildSchedules = {};
     });
     await _loadDevices();
     await _bootstrapBuildMappings();
-    await _bootstrapSchedules();
   }
 
   Future<void> _handleAddIp() async {
@@ -385,45 +320,6 @@ class _ConfigScreenState extends State<ConfigScreen> {
     await _saveBuildMappingsLocalCache();
     final ok = await Gateway.saveBuildMapping(_buildMappings);
     if (!ok) _warnServerSaveFailed('빌드 매핑');
-  }
-
-  // 스케줄 실행 주체는 이제 proxy 쪽 스케줄러다. 다른 세션/기기나 서버에서
-  // 직접 바꾼 내용이 있을 수 있으므로, 화면을 열 때마다 로컬 캐시가 아니라
-  // proxy 를 다시 조회해 최신 상태로 보여준다.
-  Future<void> _openBuildSchedulerScreen() async {
-    final remote = await Gateway.fetchSchedules();
-    if (remote != null) {
-      if (!mounted) return;
-      setState(() {
-        _buildSchedules = remote;
-      });
-      await _saveBuildSchedulesLocalCache();
-    } else {
-      _warnServerFetchFailed('빌드 스케줄');
-    }
-
-    if (!mounted) return;
-
-    final result = await Navigator.of(context)
-        .push<Map<String, List<Map<String, dynamic>>>>(
-          MaterialPageRoute(
-            builder: (_) => BuildSchedulerDialog(
-              devices: List<DeviceInfo>.from(_devices),
-              buildMappings: _buildMappings,
-              initialSchedules: _buildSchedules,
-            ),
-          ),
-        );
-
-    if (result == null) return;
-
-    if (!mounted) return;
-    setState(() {
-      _buildSchedules = result;
-    });
-    await _saveBuildSchedulesLocalCache();
-    final ok = await Gateway.saveSchedules(_buildSchedules);
-    if (!ok) _warnServerSaveFailed('빌드 스케줄');
   }
 
   Future<void> _confirmDeleteDevice(int index) async {
@@ -575,27 +471,6 @@ class _ConfigScreenState extends State<ConfigScreen> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                FilledButton.icon(
-                  onPressed: _openBuildSchedulerScreen,
-                  icon: const Icon(Icons.schedule, size: 18),
-                  label: const Text('빌드 스케줄러'),
-                  style: FilledButton.styleFrom(
-                    backgroundColor: const Color(0xFF0F766E),
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                    textStyle: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                  ),
-                ),
               ],
             ),
           ),
@@ -653,28 +528,12 @@ class _ConfigScreenState extends State<ConfigScreen> {
                   child: const Center(child: Icon(Icons.add, size: 32)),
                 ),
               ),
-              const SizedBox(height: 32),
-              const Divider(),
-              const SizedBox(height: 16),
-              const Text(
-                'FCM 토큰:',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SelectableText('', style: TextStyle(fontSize: 12)),
-              const SizedBox(height: 16),
-              const Divider(),
-              const Align(
-                alignment: Alignment.centerLeft,
+              const Spacer(),
+              Align(
+                alignment: Alignment.centerRight,
                 child: Text(
-                  'FCM 수신 로그:',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Expanded(
-                child: SingleChildScrollView(
-                  reverse: true,
-                  child: Text('', style: TextStyle(fontSize: 12)),
+                  _versionLabel,
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
                 ),
               ),
             ],

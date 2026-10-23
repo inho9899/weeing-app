@@ -16,6 +16,9 @@
          온다 (런타임 요청은 lib/main.dart의 main()에서). -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- 자동 업데이트: 받은 APK 로 설치 화면을 띄운다 (lib/utils/app_update.dart) -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <!-- 카메라 / 마이크 (필요 시) -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -49,6 +52,17 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 업데이트 APK 를 설치 화면에 넘기는 통로 (MainActivity.kt, res/xml/update_paths.xml) -->
+        <provider
+            android:name="com.example.weeing_app.UpdateFileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_paths" />
+        </provider>
 
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
