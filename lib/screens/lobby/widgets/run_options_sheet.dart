@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// 캐릭터별로 끌 수 있는 준비·정리 단계와 거짓말 탐지기 자동 풀이. 키는 봇(mainAction preprocess/postprocess,
+/// 캐릭터별로 끌 수 있는 준비·정리 단계, 사냥 중 채널 이동, 거짓말 탐지기 자동 풀이. 키는 봇(mainAction preprocess/run_loop/postprocess,
 /// intrAction 인터럽트)이 Start 의 skip 쿼리로 받는 이름이라 바꾸면 안 된다. 사냥터 입장은 항상 하므로 없다.
 /// 탐지기를 끄면 봇이 풀지 않고 멈춘다(사람이 풀고 재개). type 은 꺼도 캡차 GIF 는 앱에 올라온다.
 const runStepGroups = <String, Map<String, String>>{
@@ -13,6 +13,10 @@ const runStepGroups = <String, Map<String, String>>{
     'doping': '도핑',
     'artifact': '아티팩트 연장',
     'union_wealth': '유니온의 부',
+  },
+  'running': {
+    // 사냥 중 미니맵에 다른 사람이 보이면 채널을 옮긴다 (mainAction run_loop)
+    'channel': '채널 이동 (다른 사람 보이면)',
   },
   'postprocess': {
     'union_coin': '유니온 코인',
