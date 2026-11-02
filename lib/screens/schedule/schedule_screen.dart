@@ -370,7 +370,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       _ => Icons.logout,
     };
 
-    return Row(
+    // ListView 안에서는 세로 제약이 무한이라, 번호 아래 연결선을 Expanded 로 늘리려면 Row 의 높이를
+    // 카드 높이로 먼저 묶어야 한다 — 안 그러면 stretch·Expanded 가 무한 높이를 받아 레이아웃이 깨진다
+    // (0.1.0+21 에서 블록 카드가 서로 겹쳐 보인 원인).
+    return IntrinsicHeight(
+      child: Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SizedBox(
@@ -499,6 +503,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           ),
         ),
       ],
+      ),
     );
   }
 
