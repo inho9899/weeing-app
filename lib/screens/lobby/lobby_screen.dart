@@ -13,12 +13,19 @@ import 'widgets/cycle_control.dart';
 import 'widgets/start_time_control.dart';
 import 'widgets/mouse_mode.dart';
 import 'widgets/run_options_sheet.dart';
+import 'widgets/schedule_strip.dart';
+import 'package:weeing_app/screens/schedule/models/schedule_plan.dart';
+import 'package:weeing_app/screens/schedule/schedule_screen.dart';
+import 'package:weeing_app/screens/schedule/services/schedule_api_service.dart';
 import 'services/lobby_api_service.dart';
 import 'services/remote_input.dart';
 
 class LobbyScreen extends StatefulWidget {
   /// 대상 머신 IP (예: "192.168.0.5")
   final String ip;
+
+  /// 프록시의 기기 ID. 스케줄 저장 키로 쓴다 (없는 구버전 기기는 ip 로 대신한다).
+  final String? deviceId;
 
   /// 캡차 도움 탭에 사람 입력이 필요한 상태가 있는지 — 마우스 모드 화면에
   /// 빨간 느낌표로 표시한다 (PcTabsScreen이 캡차 도움 탭 상태를 보고 넘겨줌).
@@ -31,6 +38,7 @@ class LobbyScreen extends StatefulWidget {
   const LobbyScreen({
     super.key,
     required this.ip,
+    this.deviceId,
     this.captchaNeedsAttention = false,
     this.onTrackpadModeChanged,
   });
@@ -105,6 +113,8 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
   Timer? _pollTimer;      // cycle 폴링 (1초)
   Timer? _timeSyncTimer;  // 시간 동기화 (1분)
+  Timer? _scheduleTimer;  // 스케줄 상태 폴링 (5초) — 프록시가 돌리는 스케줄의 지금 단계를 Start 아래 한 줄에 보여준다
+  ScheduleStatus? _scheduleStatus;
   bool _initialStatusFetched = false;
 
   double _streamScale = 1.0;
@@ -233,6 +243,30 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
       const Duration(minutes: 1),
       (_) => _syncTime(),
     );
+
+    // 스케줄 상태: 5초마다
+    _fetchScheduleStatus();
+    _scheduleTimer = Timer.periodic(
+      const Duration(seconds: 5),
+      (_) => _fetchScheduleStatus(),
+    );
+  }
+
+  String get _scheduleKey => widget.deviceId ?? widget.ip;
+
+  Future<void> _fetchScheduleStatus() async {
+    final status = await ScheduleApi.fetchStatus(_scheduleKey);
+    if (!mounted || status == null) return;
+    setState(() => _scheduleStatus = status);
+  }
+
+  Future<void> _openSchedule() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ScheduleScreen(ip: widget.ip, deviceKey: _scheduleKey),
+      ),
+    );
+    _fetchScheduleStatus();
   }
 
   @override
@@ -280,6 +314,7 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
 
     _pollTimer?.cancel();
     _timeSyncTimer?.cancel();
+    _scheduleTimer?.cancel();
     _cycleCtrl.dispose();
     _hourCtrl.dispose();
     _minCtrl.dispose();
@@ -1255,6 +1290,8 @@ class _LobbyScreenState extends State<LobbyScreen> with WidgetsBindingObserver {
               onMinuteChanged: _onMinuteChanged,
             ),
           ),
+          const SizedBox(height: 12),
+          ScheduleStrip(status: _scheduleStatus, onTap: _openSchedule),
           const SizedBox(height: 24),
           _buildToggleButton(),
         ],

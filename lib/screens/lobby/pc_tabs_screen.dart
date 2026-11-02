@@ -222,6 +222,7 @@ class _PcTabsScreenState extends State<PcTabsScreen> with WidgetsBindingObserver
           children: [
             LobbyScreen(
               ip: widget.ip,
+              deviceId: widget.deviceId,
               captchaNeedsAttention: _needsAttention,
               onTrackpadModeChanged: _onTrackpadModeChanged,
             ),
