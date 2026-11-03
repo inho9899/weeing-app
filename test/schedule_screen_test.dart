@@ -46,13 +46,26 @@ void main() {
       blocks: const ['로그인(A)', '사이클(c1)', '로그아웃'],
       state: const {'phase': 'running', 'step': 1, 'run_date': '2026-11-03', 'results': []},
     );
+    final today = DateTime.now();
+    final todayText = '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+    // 끝나면 프록시가 OFF 로 돌린다 — OFF 라도 오늘 결과가 보여야 한다
+    final doneOff = ScheduleStatus(
+      exists: true, enabled: false, running: false, start: '09:00',
+      blocks: const ['로그인(A)', '사이클(c1)', '로그아웃'],
+      state: {'phase': 'done', 'step': null, 'run_date': todayText, 'results': [
+        {'ok': true, 'label': '로그인(A)'}, {'ok': false, 'label': '사이클(c1)', 'message': '귀환 실패'}, {'ok': true, 'label': '로그아웃'},
+      ]},
+    );
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: Column(children: [
       ScheduleStrip(status: off, onTap: () {}),
       ScheduleStrip(status: running, onTap: () {}),
+      ScheduleStrip(status: doneOff, onTap: () {}),
       ScheduleStrip(status: null, onTap: () {}),
     ]))));
     expect(tester.takeException(), isNull);
     expect(find.text('스케줄 OFF'), findsOneWidget);
+    expect(find.text('스케줄 OFF · 오늘 완료 (2/3 성공)'), findsOneWidget);
+    expect(find.text('사이클(c1): 귀환 실패'), findsOneWidget);
     expect(find.text('스케줄 ON · 2/3 사이클(c1) 진행 중'), findsOneWidget);
     expect(find.text('다음 로그아웃'), findsOneWidget);
     expect(find.text('스케줄 확인 중'), findsOneWidget);

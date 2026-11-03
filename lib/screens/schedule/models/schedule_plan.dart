@@ -158,33 +158,36 @@ class ScheduleStatus {
       ((state['results'] as List?) ?? []).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
   int get succeeded => results.where((r) => r['ok'] == true).length;
 
+  String get _todayWord {
+    final phase = state['phase'];
+    return phase == 'done' ? '완료' : phase == 'stopped' ? '중단' : '실패';
+  }
+
+  /// 끝나면 프록시가 OFF 로 돌리므로, OFF 라도 오늘 돈 기록이 있으면 결과를 보여준다.
   String get headline {
-    if (!exists || !enabled) return '스케줄 OFF';
+    if (!exists || !enabled) {
+      return exists && ranToday ? '스케줄 OFF · 오늘 $_todayWord ($succeeded/${blocks.length} 성공)' : '스케줄 OFF';
+    }
     final s = step;
     if (running && s != null && s < blocks.length) {
       return '스케줄 ON · ${s + 1}/${blocks.length} ${blocks[s]} 진행 중';
     }
     if (running) return '스케줄 ON · 진행 중';
-    if (ranToday) {
-      final phase = state['phase'];
-      final word = phase == 'done' ? '완료' : phase == 'stopped' ? '중단' : '실패';
-      return '스케줄 ON · 오늘 $word ($succeeded/${blocks.length} 성공)';
-    }
     return '스케줄 ON · $start 시작 대기 · 블록 ${blocks.length}개';
   }
 
   String get detail {
-    if (!exists || !enabled) return '탭해서 설정';
+    if (!exists || !enabled) {
+      if (!exists || !ranToday) return '탭해서 설정';
+      final failed = results.where((r) => r['ok'] != true).toList();
+      if (failed.isNotEmpty) return '${failed.first['label']}: ${failed.first['message']}';
+      final message = (state['message'] ?? '').toString();
+      return message.isNotEmpty ? message : '다시 켜면 다시 돈다';
+    }
     final s = step;
     if (running && s != null) {
       return s + 1 < blocks.length ? '다음 ${blocks[s + 1]}' : '마지막 블록';
     }
-    if (ranToday) {
-      final failed = results.where((r) => r['ok'] != true).toList();
-      if (failed.isNotEmpty) return '${failed.first['label']}: ${failed.first['message']}';
-      final message = (state['message'] ?? '').toString();
-      return message.isNotEmpty ? message : '내일 $start 에 다시 시작';
-    }
-    return '매일 $start 에 시작';
+    return '시작 시각이 지났으면 바로 돈다 · 끝나면 OFF';
   }
 }

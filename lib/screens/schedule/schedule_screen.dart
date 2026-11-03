@@ -164,7 +164,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       return;
     }
     setState(() => _enabled = on);
-    _snack(on ? '스케줄을 켰다' : '스케줄을 껐다. 진행 중인 블록까지만 하고 멈춘다');
+    _snack(on ? '스케줄을 켰다. 시작 시각이 지났으면 바로 돈다' : '스케줄을 껐다. 진행 중인 블록까지만 하고 멈춘다');
     _refreshStatus();
   }
 
@@ -344,7 +344,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              const Text('매일 반복', style: TextStyle(fontSize: 12, color: _dark)),
+              const Text('끝나면 OFF', style: TextStyle(fontSize: 12, color: _dark)),
               const SizedBox(height: 2),
               Text(
                 '사이클 ${_plan.totalCycles} · 약 ${ScheduleBlock.hoursText(_plan.totalCycles)}',
