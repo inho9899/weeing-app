@@ -27,6 +27,8 @@ const runStepGroups = <String, Map<String, String>>{
     'dongnama': '탐지기 자동 풀이 (올바른 문장)',
     'shape': '탐지기 자동 풀이 (도형)',
     'viol': '탐지기 자동 풀이 (바이올렛)',
+    // quizSolver(LLM CLI)가 푼다. 켜 둬도 그 PC 에서 LLM 을 못 부르면 봇이 꺼진 것처럼 멈춘다
+    'quizshow': '탐지기 자동 풀이 (웹 퀴즈)',
   },
 };
 
