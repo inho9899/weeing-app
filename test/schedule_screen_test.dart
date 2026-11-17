@@ -21,19 +21,28 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.text('첫 블록 시작'), findsOneWidget);
 
-    for (final label in ['로그인', '사이클', '로그아웃', '사이클']) {
+    for (final label in ['로그인', '사이클', '대기', '로그아웃', '사이클']) {
       await tester.tap(find.widgetWithText(InkWell, label).last);
       await tester.pumpAndSettle();
       expect(tester.takeException(), isNull, reason: '$label 블록을 추가하다 레이아웃 예외');
     }
     expect(find.text('약 5시간'), findsNWidgets(2)); // 사이클 10 기본값 두 개
-    expect(find.text('4'), findsOneWidget); // 네 번째 블록 번호
+    expect(find.text('30분'), findsOneWidget); // 대기 기본값
+    expect(find.text('5'), findsOneWidget); // 다섯째 블록 번호
+
+    // 대기 블록을 '정해진 시각까지' 로 바꾸면 시각 버튼이 보인다
+    await tester.tap(find.text('정해진 시간 동안'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('정해진 시각까지').last);
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('09:00'), findsOneWidget); // 계획 시작 시각이 기본값
 
     // 삭제 뒤에도 멀쩡해야 한다
     await tester.tap(find.byTooltip('블록 삭제').first);
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect(find.text('4'), findsNothing);
+    expect(find.text('5'), findsNothing);
 
     // 주기 타이머를 끝내려고 화면을 내린다
     await tester.pumpWidget(const SizedBox());

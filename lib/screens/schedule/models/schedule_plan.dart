@@ -1,11 +1,12 @@
 /// 스케줄 계획·상태 모델. 키 이름은 프록시(weeing-proxy utils/schedule/router.py)가 받고 주는 그대로라 바꾸면 안 된다.
 library;
 
-/// 블록 하나. 로그인(계정) → 사이클(캐릭터·빌드·사이클 수·끈 단계) → 로그아웃 순으로 쌓는다.
+/// 블록 하나. 로그인(계정) → 사이클(캐릭터·빌드·사이클 수·끈 단계) → 로그아웃 순으로 쌓고, 사이에 대기(N분 또는 HH:MM 까지)를 둘 수 있다.
 class ScheduleBlock {
   static const login = 'login';
   static const cycle = 'cycle';
   static const logout = 'logout';
+  static const wait = 'wait';
 
   final String type;
   String account; // login: PC 계정 목록(subAction macros)의 이름
@@ -13,6 +14,8 @@ class ScheduleBlock {
   String build; // cycle: 빌드명 (mainAction start 에 그대로 간다)
   int cycles; // cycle: 사이클 수 (statusChecker cycle/set)
   List<String> skip; // cycle: 끈 준비·정리 단계 키 (run_options_sheet 의 runStepGroups)
+  int minutes; // wait: 기다릴 분 (until 이 비어 있을 때)
+  String until; // wait: 오늘 이 시각까지 "HH:MM". 비어 있으면 minutes 로 기다린다
 
   ScheduleBlock({
     required this.type,
@@ -21,6 +24,8 @@ class ScheduleBlock {
     this.build = '',
     this.cycles = 10,
     List<String>? skip,
+    this.minutes = 30,
+    this.until = '',
   }) : skip = skip ?? [];
 
   factory ScheduleBlock.fromJson(Map<String, dynamic> json) => ScheduleBlock(
@@ -30,6 +35,8 @@ class ScheduleBlock {
         build: (json['build'] ?? '').toString(),
         cycles: (json['cycles'] as num?)?.toInt() ?? 10,
         skip: (json['skip'] as List?)?.map((e) => e.toString()).toList() ?? [],
+        minutes: (json['minutes'] as num?)?.toInt() ?? 30,
+        until: (json['until'] ?? '').toString(),
       );
 
   Map<String, dynamic> toJson() => switch (type) {
@@ -41,6 +48,7 @@ class ScheduleBlock {
             'cycles': cycles,
             'skip': skip,
           },
+        wait => until.isNotEmpty ? {'type': type, 'until': until} : {'type': type, 'minutes': minutes},
         _ => {'type': type},
       };
 
@@ -48,8 +56,12 @@ class ScheduleBlock {
         login => '로그인',
         cycle => '사이클',
         logout => '로그아웃',
+        wait => '대기',
         _ => type,
       };
+
+  /// 대기 블록의 한 줄 설명 ("30분" / "14:00 까지").
+  String get waitText => until.isNotEmpty ? '$until 까지' : '$minutes분';
 
   /// 사이클 수로 어림한 소요 시간 ("약 5시간 30분"). 사이클 하나를 30분으로 본다.
   String get durationText => hoursText(cycles);
@@ -84,13 +96,35 @@ class SchedulePlan {
   int get totalCycles =>
       blocks.where((b) => b.type == ScheduleBlock.cycle).fold(0, (sum, b) => sum + b.cycles);
 
-  /// 시작 시각 + 사이클 합계 + 블록마다 3분(로그인·로그아웃)으로 어림한 종료 시각.
+  static int _minutesOf(String hhmm, int fallback) {
+    final parts = hhmm.split(':');
+    if (parts.length != 2) return fallback;
+    final h = int.tryParse(parts[0]);
+    final m = int.tryParse(parts[1]);
+    return h == null || m == null ? fallback : h * 60 + m;
+  }
+
+  /// 시작 시각부터 블록을 차례로 더해 어림한 종료 시각. 사이클은 30분씩, 로그인·로그아웃은 3분, 대기는 그 분만큼,
+  /// 시각까지 대기는 그 시각으로 건너뛴다(이미 지났으면 안 기다린다).
   String get endTimeText {
-    final parts = start.split(':');
-    final startMinutes = (int.tryParse(parts[0]) ?? 9) * 60 + (int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0);
-    final total = startMinutes + totalCycles * 30 + blocks.length * 3;
-    final h = (total ~/ 60) % 24;
-    final m = total % 60;
+    var clock = _minutesOf(start, 9 * 60);
+    for (final b in blocks) {
+      switch (b.type) {
+        case ScheduleBlock.cycle:
+          clock += b.cycles * 30 + 3;
+        case ScheduleBlock.wait:
+          if (b.until.isNotEmpty) {
+            final target = _minutesOf(b.until, clock);
+            if (target > clock) clock = target;
+          } else {
+            clock += b.minutes;
+          }
+        default:
+          clock += 3;
+      }
+    }
+    final h = (clock ~/ 60) % 24;
+    final m = clock % 60;
     return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
   }
 }

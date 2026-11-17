@@ -207,6 +207,20 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     });
   }
 
+  Future<void> _pickUntil(ScheduleBlock block) async {
+    final parts = block.until.split(':');
+    final initial = TimeOfDay(
+      hour: int.tryParse(parts.first) ?? 12,
+      minute: int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0,
+    );
+    final picked = await showTimePicker(context: context, initialTime: initial);
+    if (picked == null) return;
+    setState(() {
+      block.until = '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
+      _dirty = true;
+    });
+  }
+
   void _openOptions(ScheduleBlock block) {
     showRunOptionsSheet(
       context,
@@ -362,11 +376,13 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     final iconColor = switch (block.type) {
       ScheduleBlock.login => const Color(0xFF2E7D32),
       ScheduleBlock.cycle => const Color(0xFF1565C0),
+      ScheduleBlock.wait => const Color(0xFF6A1B9A),
       _ => const Color(0xFFD84315),
     };
     final icon = switch (block.type) {
       ScheduleBlock.login => Icons.login,
       ScheduleBlock.cycle => Icons.autorenew,
+      ScheduleBlock.wait => Icons.hourglass_bottom,
       _ => Icons.logout,
     };
 
@@ -498,6 +514,68 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
                     Text('꺼짐: ${runStepLabels(block.skip).join(', ')}', style: const TextStyle(fontSize: 12, color: Colors.deepOrange)),
                   ],
                 ],
+                if (block.type == ScheduleBlock.wait) ...[
+                  const SizedBox(height: 8),
+                  _labeled(
+                    '방식',
+                    _dropdown(
+                      value: block.until.isEmpty ? 'minutes' : 'until',
+                      items: const ['minutes', 'until'],
+                      labels: const {'minutes': '정해진 시간 동안', 'until': '정해진 시각까지'},
+                      hint: '',
+                      onChanged: (v) => setState(() {
+                        block.until = v == 'until' ? (block.until.isEmpty ? _plan.start : block.until) : '';
+                        _dirty = true;
+                      }),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  if (block.until.isEmpty)
+                    _labeled(
+                      '시간',
+                      Row(
+                        children: [
+                          _stepButton('−', () => setState(() {
+                                block.minutes = (block.minutes - 5).clamp(5, 1440);
+                                _dirty = true;
+                              })),
+                          SizedBox(
+                            width: 64,
+                            child: Text('${block.minutes}분', textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                          ),
+                          _stepButton('+', () => setState(() {
+                                block.minutes = (block.minutes + 5).clamp(5, 1440);
+                                _dirty = true;
+                              })),
+                          const Expanded(
+                            child: Text('5분씩 · OFF 하면 바로 멈춤', textAlign: TextAlign.right, style: TextStyle(fontSize: 12, color: _dark)),
+                          ),
+                        ],
+                      ),
+                    )
+                  else
+                    _labeled(
+                      '시각',
+                      Row(
+                        children: [
+                          InkWell(
+                            onTap: () => _pickUntil(block),
+                            borderRadius: BorderRadius.circular(6),
+                            child: Container(
+                              height: 36,
+                              padding: const EdgeInsets.symmetric(horizontal: 12),
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(color: _dark, borderRadius: BorderRadius.circular(6)),
+                              child: Text(block.until, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+                            ),
+                          ),
+                          const Expanded(
+                            child: Text('오늘 그 시각까지 · 지났으면 안 기다림', textAlign: TextAlign.right, style: TextStyle(fontSize: 12, color: _dark)),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
               ],
             ),
           ),
@@ -576,9 +654,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
           Row(
             children: [
               _addButton('로그인', const Color(0xFF2E7D32), () => _addBlock(ScheduleBlock.login)),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
               _addButton('사이클', const Color(0xFF1565C0), () => _addBlock(ScheduleBlock.cycle)),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
+              _addButton('대기', const Color(0xFF6A1B9A), () => _addBlock(ScheduleBlock.wait)),
+              const SizedBox(width: 6),
               _addButton('로그아웃', const Color(0xFFD84315), () => _addBlock(ScheduleBlock.logout)),
             ],
           ),
@@ -618,7 +698,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               children: [
                 Container(width: 10, height: 10, decoration: BoxDecoration(color: dot, shape: BoxShape.circle)),
                 const SizedBox(width: 6),
-                Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                Text(label, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
               ],
             ),
           ),
