@@ -21,6 +21,7 @@ const runStepGroups = <String, Map<String, String>>{
   'postprocess': {
     'union_coin': '유니온 코인',
     'daily_gift': '데일리 기프트',
+    'event_daily': '이벤트 데일리',
   },
   'interrupt': {
     'type': '탐지기 자동 풀이 (캡차 입력)',
