@@ -45,29 +45,23 @@ class _BuildMappingDialogState extends State<BuildMappingDialog> {
 
   Future<void> _loadOptions() async {
     try {
+      // 빌드 목록은 기기마다 따로 받는다 — PC 마다 업데이트 시점이 달라 띄워져 있는 빌드가 다를 수 있다
+      // (한 기기 목록을 전 기기에 쓰면, 먼저 응답한 기기가 옛 버전일 때 새 빌드가 안 보였다)
       final results = await Future.wait(
         widget.devices.map((device) async {
-          final accounts = await _fetchAccounts(device.ip);
-          return MapEntry(device.ip, accounts);
+          final fetched = await Future.wait([
+            _fetchAccounts(device.ip),
+            _fetchBuilds(device.ip),
+          ]);
+          return MapEntry(device.ip, fetched);
         }),
       );
 
       if (!mounted) return;
 
-      // 모든 기기가 FinalBuild.py 전체 빌드 목록을 공유하므로, 한 기기에서만
-      // 조회해 전 기기에 재사용한다 (오프라인 대비, 응답 있는 기기까지 순회).
-      List<String> sharedBuilds = const [];
-      for (final device in widget.devices) {
-        final builds = await _fetchBuilds(device.ip);
-        if (builds.isNotEmpty) {
-          sharedBuilds = builds;
-          break;
-        }
-      }
-
       for (final entry in results) {
-        _accountsByDevice[entry.key] = entry.value;
-        _buildsByDevice[entry.key] = sharedBuilds;
+        _accountsByDevice[entry.key] = entry.value[0] as List<_MacroOption>;
+        _buildsByDevice[entry.key] = entry.value[1] as List<String>;
       }
 
       _applyInitialSelections();
